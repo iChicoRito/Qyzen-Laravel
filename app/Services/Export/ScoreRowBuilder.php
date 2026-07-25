@@ -96,7 +96,8 @@ final class ScoreRowBuilder
     // Best attempt = highest raw score, then highest percentage, then most recent (highest id).
     // A submitted-but-null-score row is only ever "best" when it's the student's only attempt —
     // ranked via a tuple so PHP's array<=>array comparison gives a safe, null-proof ordering.
-    private static function bestAttempt($attempts)
+    // Public so the Task 27 scores matrix resolves "best attempt" from this one definition.
+    public static function bestAttempt($attempts)
     {
         return collect($attempts)->sortByDesc(fn ($s) => [
             $s->score === null ? 0 : 1,

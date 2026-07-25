@@ -235,10 +235,12 @@ class EducatorFeaturesTest extends TestCase
         $newer->delete();
 
         $this->actingAs($this->eduA)
-            ->get(route('educator.scores.index'))
-            ->assertSee('Best: 2/5')
+            ->get(route('educator.scores.matrix', [
+                'subject' => $subject->id, 'section' => $subject->sections_id, 'term' => $this->term->id,
+            ]))
+            ->assertSee('2/5')
             ->assertSee('1 attempt')
-            ->assertDontSee('Best: 5/5');
+            ->assertDontSee('5/5');
 
         $this->assertNotNull($older->fresh());
     }
@@ -1922,103 +1924,174 @@ class EducatorFeaturesTest extends TestCase
         $this->assertSame(0, Quiz::where('subject_id', $subject->id)->count());
     }
 
-    // ---- G7 scores: task 26 organization (student column + filters, owner-scoped) ----
+    // ---- G7 scores: task 27 — index is a CLASS list, student scores live in the matrix modal ----
 
-    public function test_scores_index_shows_student_columns_filters_and_stays_scoped(): void
+    public function test_scores_index_lists_classes_with_filters_and_stays_scoped(): void
     {
         $subject = $this->subject($this->eduA);
         $section = Section::find($subject->sections_id);
-        $this->student->update(['given_name' => 'Ann', 'surname' => 'Zamora']);
-        $assessment = Assessment::create($this->assessmentModelData($subject));
-        Score::create([
-            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $assessment->id,
-            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 8, 'total_questions' => 10,
-            'student_answer' => [], 'status' => 'passed', 'is_passed' => true, 'submitted_at' => now(),
-        ]);
-        $otherOwnStudent = $this->makeUser('student', 'student');
-        $otherOwnStudent->update(['given_name' => 'Ben', 'surname' => 'Alpha']);
-        Score::create([
-            'student_id' => $otherOwnStudent->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $assessment->id,
-            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 6, 'total_questions' => 10,
-            'student_answer' => [], 'status' => 'failed', 'is_passed' => false, 'submitted_at' => now(),
-        ]);
+        Assessment::create($this->assessmentModelData($subject));
 
-        // eduB's score must never leak into eduA's view (visibleTo).
+        // A second class of eduA's, excluded by the subject filter below.
+        $otherSubject = $this->subject($this->eduA);
+        Assessment::create(array_merge($this->assessmentModelData($otherSubject), ['assessment_code' => 'OTHERQ']));
+
+        // eduB's class must never leak into eduA's view (visibleTo).
         $subjectB = $this->subject($this->eduB);
-        $assessmentB = Assessment::create([
+        Assessment::create([
             'educator_id' => $this->eduB->id, 'subject_id' => $subjectB->id, 'section_id' => $subjectB->sections_id,
             'assessment_code' => 'ZZTOP', 'time_limit' => '30', 'term' => $this->term->id,
             'start_date' => '2026-07-01', 'end_date' => '2026-07-02', 'start_time' => '08:00', 'end_time' => '09:00',
         ]);
-        Score::create([
-            'student_id' => $this->student->id, 'educator_id' => $this->eduB->id, 'assessment_id' => $assessmentB->id,
-            'subject_id' => $subjectB->id, 'section_id' => $subjectB->sections_id, 'score' => 1, 'total_questions' => 10,
-            'student_answer' => [], 'status' => 'failed', 'is_passed' => false, 'submitted_at' => now(),
-        ]);
 
         $res = $this->actingAs($this->eduA)->get(route('educator.scores.index', [
-            'search' => 'Zamora',
             'subject' => $subject->id,
             'per_page' => 10,
         ]))->assertOk();
 
-        $res->assertSee('Zamora')->assertSee('Ann');                 // student-info first column
-        $res->assertSee($subject->subject_code)->assertSee($section->section_name); // subject/section columns
-        $res->assertSee('data-filter="subject"', false)              // new filter selects present
+        // Subject / Section / Term columns + the row's matrix action.
+        $res->assertSee($subject->subject_code)
+            ->assertSee($section->section_name)
+            ->assertSee($this->term->term_name)
+            ->assertSee('1 assessment')
+            ->assertSee(route('educator.scores.matrix', [
+                'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id,
+            ]));
+        $res->assertSee('data-filter="subject"', false)
             ->assertSee('data-filter="section"', false)
             ->assertSee('data-filter="term"', false)
-            ->assertSee('Search students, assessments, subjects')
-            ->assertSee('Delete Score');
-        $res->assertDontSee('Alpha');                                // server-side search, not client hiding
-        $res->assertDontSee('ZZTOP');                                // eduB's assessment never shown
+            ->assertSee('Search subjects, sections, terms');
+        // Per-student columns moved into the modal.
+        $res->assertDontSee('Best score')->assertDontSee('Latest submission');
+        // Assert on the row's matrix link, not the subject code — every one of this educator's
+        // subject codes also appears in the export modal's inlined options JSON.
+        $res->assertDontSee(route('educator.scores.matrix', [   // server-side filter, not client hiding
+            'subject' => $otherSubject->id, 'section' => $otherSubject->sections_id, 'term' => $this->term->id,
+        ]));
+        $res->assertDontSee('ZZTOP');                          // eduB's class never shown
     }
 
-    public function test_scores_index_groups_attempts_by_student_and_assessment(): void
+    public function test_scores_matrix_builds_one_column_per_assessment_and_shows_attempts(): void
     {
         $subject = $this->subject($this->eduA);
         $section = Section::find($subject->sections_id);
-        $assessment = Assessment::create($this->assessmentModelData($subject));
-        $latest = Score::create([
-            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $assessment->id,
-            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 8, 'total_questions' => 10,
-            'student_answer' => [], 'status' => 'passed', 'is_passed' => true, 'submitted_at' => now(),
-        ]);
-        // An offline backfill can be inserted later while representing an earlier attempt.
-        $older = Score::create([
-            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $assessment->id,
-            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 6, 'total_questions' => 10,
-            'student_answer' => [], 'status' => 'failed', 'is_passed' => false, 'submitted_at' => now()->subDay(),
-        ]);
-
-        $response = $this->actingAs($this->eduA)->get(route('educator.scores.index'));
-
-        $response->assertOk()->assertSee('2 attempts')->assertSee('Best: 8/10')
-            ->assertSee(route('educator.scores.show', $latest))
-            ->assertDontSee(route('educator.scores.show', $older));
-    }
-
-    public function test_scores_index_sorts_best_scores_by_percentage(): void
-    {
-        $subject = $this->subject($this->eduA);
-        $section = Section::find($subject->sections_id);
+        $this->student->update(['given_name' => 'Ann', 'surname' => 'Zamora']);
         $first = Assessment::create($this->assessmentModelData($subject));
-        $second = Assessment::create(array_merge($this->assessmentModelData($subject), ['assessment_code' => 'PERCENTAGE']));
+        $second = Assessment::create(array_merge($this->assessmentModelData($subject), ['assessment_code' => 'QUIZTWO']));
+
         Score::create([
             'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $first->id,
             'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 8, 'total_questions' => 10,
             'student_answer' => [], 'status' => 'passed', 'is_passed' => true, 'submitted_at' => now(),
         ]);
+        // An offline backfill can be inserted later while representing an earlier attempt.
         Score::create([
-            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $second->id,
-            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 7, 'total_questions' => 7,
-            'student_answer' => [], 'status' => 'passed', 'is_passed' => true, 'submitted_at' => now(),
+            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $first->id,
+            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 6, 'total_questions' => 10,
+            'student_answer' => [], 'status' => 'failed', 'is_passed' => false, 'submitted_at' => now()->subDay(),
         ]);
 
-        $scores = $this->actingAs($this->eduA)
-            ->get(route('educator.scores.index', ['sort' => 'score', 'direction' => 'desc']))
-            ->viewData('scores');
+        $res = $this->actingAs($this->eduA)->get(route('educator.scores.matrix', [
+            'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id,
+        ]))->assertOk();
 
-        $this->assertSame($second->id, $scores->first()->assessment_id);
+        // Columns come from the assessment list — both codes are headers, nothing hard-coded.
+        $res->assertSee('Q1')->assertSee('QUIZTWO')
+            ->assertSee('Zamora, Ann')                              // one Student column…
+            ->assertSee($this->student->user_id)                    // …with the student number beneath
+            ->assertDontSee('Given Name')
+            ->assertSee('8/10')          // best of the two attempts, not the latest
+            ->assertSee('2 attempts')
+            ->assertSee(route('educator.scores.student', [
+                'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id, 'student' => $this->student->id,
+            ]));
+
+        // The un-taken second assessment renders an empty cell for this student.
+        $this->assertStringContainsString('—', $res->getContent());
+    }
+
+    public function test_scores_matrix_resolves_best_attempt_by_percentage(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::find($subject->sections_id);
+        $assessment = Assessment::create($this->assessmentModelData($subject));
+        foreach ([[8, 10], [7, 7]] as [$score, $total]) {
+            Score::create([
+                'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $assessment->id,
+                'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => $score, 'total_questions' => $total,
+                'student_answer' => [], 'status' => 'passed', 'is_passed' => true, 'submitted_at' => now(),
+            ]);
+        }
+
+        $this->actingAs($this->eduA)->get(route('educator.scores.matrix', [
+            'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id,
+        ]))->assertOk()->assertSee('8/10');  // higher raw score wins the tie-break, as the export does
+    }
+
+    public function test_scores_matrix_lists_enrolled_students_by_surname_including_non_submitters(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::find($subject->sections_id);
+        Assessment::create($this->assessmentModelData($subject));
+
+        $this->student->update(['given_name' => 'Ann', 'surname' => 'Zamora']);
+        $early = $this->makeUser('student', 'student');
+        $early->update(['given_name' => 'Ben', 'surname' => 'Alpha']);
+        foreach ([$this->student, $early] as $enrollee) {
+            Enrolled::create([
+                'student_id' => $enrollee->id, 'educator_id' => $this->eduA->id,
+                'subject_id' => $subject->id, 'is_active' => true,
+            ]);
+        }
+
+        $html = $this->actingAs($this->eduA)->get(route('educator.scores.matrix', [
+            'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id,
+        ]))->assertOk()->getContent();
+
+        // Enrolled non-submitters still get a row, ordered by surname.
+        $this->assertLessThan(strpos($html, 'Zamora'), strpos($html, 'Alpha'));
+    }
+
+    public function test_scores_matrix_and_student_detail_reject_another_educators_class(): void
+    {
+        $subjectB = $this->subject($this->eduB);
+        $params = [
+            'subject' => $subjectB->id, 'section' => $subjectB->sections_id, 'term' => $this->term->id,
+        ];
+
+        $this->actingAs($this->eduA)->get(route('educator.scores.matrix', $params))->assertNotFound();
+        $this->actingAs($this->eduA)
+            ->get(route('educator.scores.student', $params + ['student' => $this->student->id]))
+            ->assertNotFound();
+    }
+
+    public function test_scores_student_detail_shows_answers_and_retake_grant(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::find($subject->sections_id);
+        $assessment = Assessment::create($this->assessmentModelData($subject));
+        $quiz = Quiz::create([
+            'educator_id' => $this->eduA->id, 'subject_id' => $subject->id, 'question' => 'Capital of France?',
+            'quiz_type' => 'identification', 'correct_answer' => 'Paris', 'is_active' => true,
+        ]);
+        $score = Score::create([
+            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id, 'assessment_id' => $assessment->id,
+            'subject_id' => $subject->id, 'section_id' => $section->id, 'score' => 0, 'total_questions' => 1,
+            'drawn_quiz_ids' => [$quiz->id], 'student_answer' => [$quiz->id => 'Lyon'],
+            'status' => 'failed', 'is_passed' => false, 'submitted_at' => now(),
+        ]);
+
+        $this->actingAs($this->eduA)->get(route('educator.scores.student', [
+            'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id, 'student' => $this->student->id,
+        ]))->assertOk()
+            ->assertSee('Capital of France?')
+            ->assertSee('Lyon')                                              // submitted answer
+            ->assertSee('Paris')                                             // correct answer (educator view)
+            ->assertSee('Grant retake')                                      // grant preserved
+            ->assertSee(route('educator.scores.destroy', $score), false)     // delete attempt preserved
+            ->assertSee(route('educator.scores.matrix', [
+                'subject' => $subject->id, 'section' => $section->id, 'term' => $this->term->id,
+            ]));                                                             // back to the matrix
     }
 
     public function test_sections_index_does_not_nest_modal_or_row_forms_inside_query_controls(): void

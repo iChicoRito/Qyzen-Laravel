@@ -223,6 +223,10 @@ Route::middleware(['auth', 'verified', 'role:educator'])
         Route::get('scores/upload/template', [ScoreController::class, 'uploadTemplate'])->name('scores.upload.template');
         Route::post('scores/upload', [ScoreController::class, 'upload'])->name('scores.upload');
         Route::get('scores/deleted', [ScoreController::class, 'deleted'])->name('scores.deleted');
+        // Task 27: class scores matrix + per-student detail, both modal fragments off the index
+        // row menu. Query params (not path segments) so they don't collide with {score}.
+        Route::get('scores/matrix', [ScoreController::class, 'matrix'])->name('scores.matrix');
+        Route::get('scores/student', [ScoreController::class, 'studentDetail'])->name('scores.student');
         Route::patch('scores/{score}/restore', [ScoreController::class, 'restore'])->withTrashed()->name('scores.restore');
         Route::delete('scores/{score}', [ScoreController::class, 'destroy'])->withTrashed()->name('scores.destroy');
         Route::get('scores/{score}', [ScoreController::class, 'show'])->name('scores.show');

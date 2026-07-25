@@ -9,11 +9,13 @@ use App\Http\Requests\GrantRetakeRequest;
 use App\Imports\OfflineScoresImport;
 use App\Models\AcademicTerm;
 use App\Models\Assessment;
+use App\Models\Enrolled;
 use App\Models\Quiz;
 use App\Models\Score;
 use App\Models\Section;
 use App\Models\StudentAssessmentRetake;
 use App\Models\Subject;
+use App\Services\Export\ScoreRowBuilder;
 use App\Services\NotificationService;
 use App\Services\OfflineScoreUploadService;
 use App\Services\ScoreExportService;
@@ -42,84 +44,57 @@ class ScoreController extends Controller
     {
         $this->authorize('viewAny', Score::class);
 
-        // Task 46: eager-load the visible score rows, then apply GET-backed search, filters,
-        // sorting, and pagination before the shared table renders.
-        $query = Score::visibleTo(Auth::user())
-            ->whereIn('tbl_scores.status', ['submitted', 'passed', 'failed'])
-            ->whereNotExists(function ($q) {
-                $q->selectRaw('1')->from('tbl_scores as newer')
-                    ->whereColumn('newer.educator_id', 'tbl_scores.educator_id')
-                    ->whereColumn('newer.student_id', 'tbl_scores.student_id')
-                    ->whereColumn('newer.assessment_id', 'tbl_scores.assessment_id')
-                    ->whereNull('newer.deleted_at')
-                    ->whereIn('newer.status', ['submitted', 'passed', 'failed'])
-                    ->where(function ($newer) {
-                        $newer->whereColumn('newer.submitted_at', '>', 'tbl_scores.submitted_at')
-                            ->orWhere(function ($tie) {
-                                $tie->whereColumn('newer.submitted_at', '=', 'tbl_scores.submitted_at')
-                                    ->whereColumn('newer.id', '>', 'tbl_scores.id');
-                            });
-                    });
-            })
-            ->select('tbl_scores.*')
-            ->leftJoin('tbl_users as sort_students', 'sort_students.id', '=', 'tbl_scores.student_id')
-            ->leftJoin('tbl_assessments as sort_assessments', 'sort_assessments.id', '=', 'tbl_scores.assessment_id')
-            ->leftJoin('tbl_subjects as sort_subjects', 'sort_subjects.id', '=', 'tbl_scores.subject_id')
-            ->leftJoin('tbl_sections as sort_sections', 'sort_sections.id', '=', 'tbl_scores.section_id')
-            ->leftJoin('tbl_academic_term as sort_terms', 'sort_terms.id', '=', 'sort_assessments.term')
-            ->with([
-                'student:id,given_name,surname,user_id,profile_picture',
-                'assessment:id,assessment_code,term',
-                'assessment.academicTerm:id,term_name',
-                'subject:id,subject_code,subject_name',
-                'section:id,section_name',
-            ]);
+        // Task 27: the index is a CLASS list — one row per subject/section/term that has at least
+        // one assessment (so a class with no submissions yet still opens to show its roster).
+        // Per-student scores moved into the matrix modal (@matrix). Assessment::visibleTo carries
+        // the same ownership + active-term gate Score::visibleTo does, so nothing widens here.
+        $query = Assessment::visibleTo(Auth::user())
+            ->join('tbl_subjects', 'tbl_subjects.id', '=', 'tbl_assessments.subject_id')
+            ->join('tbl_sections', 'tbl_sections.id', '=', 'tbl_assessments.section_id')
+            ->join('tbl_academic_term', 'tbl_academic_term.id', '=', 'tbl_assessments.term')
+            ->select([
+                'tbl_assessments.subject_id',
+                'tbl_assessments.section_id',
+                'tbl_assessments.term',
+                'tbl_subjects.subject_code',
+                'tbl_subjects.subject_name',
+                'tbl_sections.section_name',
+                'tbl_academic_term.term_name',
+            ])
+            // Every non-aggregate select must be grouped (MySQL ONLY_FULL_GROUP_BY).
+            ->groupBy(
+                'tbl_assessments.subject_id',
+                'tbl_assessments.section_id',
+                'tbl_assessments.term',
+                'tbl_subjects.subject_code',
+                'tbl_subjects.subject_name',
+                'tbl_sections.section_name',
+                'tbl_academic_term.term_name',
+            )
+            ->selectRaw('count(*) as assessments_count');
         TableQuery::search($query, $request->query('search'), [
-            fn (Builder $q, string $term) => $q->orWhereHas('student', fn ($s) => $s
-                ->where('given_name', 'like', "%{$term}%")
-                ->orWhere('surname', 'like', "%{$term}%")
-                ->orWhere('user_id', 'like', "%{$term}%")),
-            fn (Builder $q, string $term) => $q->orWhereHas('assessment', fn ($a) => $a->where('assessment_code', 'like', "%{$term}%")),
-            fn (Builder $q, string $term) => $q->orWhereHas('subject', fn ($s) => $s
-                ->where('subject_code', 'like', "%{$term}%")
-                ->orWhere('subject_name', 'like', "%{$term}%")),
-            fn (Builder $q, string $term) => $q->orWhereHas('section', fn ($s) => $s->where('section_name', 'like', "%{$term}%")),
+            'tbl_subjects.subject_code',
+            'tbl_subjects.subject_name',
+            'tbl_sections.section_name',
+            'tbl_academic_term.term_name',
         ]);
         TableQuery::filters($query, $request, [
-            'assessment' => fn (Builder $q, string $value) => $q->whereHas('assessment', fn ($a) => $a->where('assessment_code', $value)),
-            'subject' => 'tbl_scores.subject_id',
-            'section' => 'tbl_scores.section_id',
-            'term' => fn (Builder $q, string $value) => $q->whereHas('assessment', fn ($a) => $a->where('term', $value)),
-            'result' => fn (Builder $q, string $value) => $q->where('is_passed', $value === 'passed'),
+            'subject' => 'tbl_assessments.subject_id',
+            'section' => 'tbl_assessments.section_id',
+            'term' => 'tbl_assessments.term',
         ]);
-        // One latest submitted row per student/assessment, while correlated aggregates retain the
-        // full attempt history needed by the concise table and existing detail route.
-        $query->selectRaw("(select count(*) from tbl_scores as attempts where attempts.educator_id = tbl_scores.educator_id and attempts.student_id = tbl_scores.student_id and attempts.assessment_id = tbl_scores.assessment_id and attempts.deleted_at is null and attempts.status in ('submitted', 'passed', 'failed')) as attempts_count")
-            ->selectRaw("(select best.score from tbl_scores as best where best.educator_id = tbl_scores.educator_id and best.student_id = tbl_scores.student_id and best.assessment_id = tbl_scores.assessment_id and best.deleted_at is null and best.status in ('submitted', 'passed', 'failed') order by case when best.total_questions > 0 then best.score * 1.0 / best.total_questions else 0 end desc, best.id desc limit 1) as best_score")
-            ->selectRaw("(select best.total_questions from tbl_scores as best where best.educator_id = tbl_scores.educator_id and best.student_id = tbl_scores.student_id and best.assessment_id = tbl_scores.assessment_id and best.deleted_at is null and best.status in ('submitted', 'passed', 'failed') order by case when best.total_questions > 0 then best.score * 1.0 / best.total_questions else 0 end desc, best.id desc limit 1) as best_total_questions")
-            ->selectRaw("(select case when best.total_questions > 0 then best.score * 100.0 / best.total_questions else 0 end from tbl_scores as best where best.educator_id = tbl_scores.educator_id and best.student_id = tbl_scores.student_id and best.assessment_id = tbl_scores.assessment_id and best.deleted_at is null and best.status in ('submitted', 'passed', 'failed') order by case when best.total_questions > 0 then best.score * 1.0 / best.total_questions else 0 end desc, best.id desc limit 1) as best_percentage");
         TableQuery::sort($query, $request, [
-            'student' => function (Builder $q, string $direction): void {
-                $q->orderBy('sort_students.surname', $direction)
-                    ->orderBy('sort_students.given_name', $direction)
-                    ->orderBy('sort_students.user_id', $direction)
-                    ->orderBy('tbl_scores.id', 'desc');
-            },
-            'assessment' => 'sort_assessments.assessment_code',
             'subject' => function (Builder $q, string $direction): void {
-                $q->orderBy('sort_subjects.subject_code', $direction)
-                    ->orderBy('sort_subjects.subject_name', $direction)
-                    ->orderBy('tbl_scores.id', 'desc');
+                $q->orderBy('tbl_subjects.subject_code', $direction)
+                    ->orderBy('tbl_subjects.subject_name', $direction);
             },
-            'section' => 'sort_sections.section_name',
-            'term' => 'sort_terms.term_name',
-            'score' => 'best_percentage',
-            'attempts' => 'attempts_count',
-            'result' => 'is_passed',
-            'submitted' => 'submitted_at',
-        ], 'submitted', 'desc');
+            'section' => 'tbl_sections.section_name',
+            'term' => 'tbl_academic_term.term_name',
+        ], 'subject');
 
-        $scores = $query->paginate(TableQuery::perPage($request))->withQueryString();
+        // paginate() is grouped-query safe: Laravel wraps a grouped query in a subquery for the
+        // count instead of counting per group.
+        $classes = $query->paginate(TableQuery::perPage($request))->withQueryString();
 
         // Task 27: this educator's assessments, flattened for the export modal's cascading
         // Subject → Section → Assessment selects — rendered inline so opening the modal needs
@@ -147,18 +122,128 @@ class ScoreController extends Controller
             ->values();
 
         $selectedSection = $request->query('section');
-        $selectedSubject = $request->query('subject');
-        $filterAssessments = Assessment::visibleTo(Auth::user())
-            ->when($selectedSection, fn ($q) => $q->where('section_id', $selectedSection))
-            ->when($selectedSubject, fn ($q) => $q->where('subject_id', $selectedSubject))
-            ->orderBy('assessment_code')->pluck('assessment_code');
         $filterSubjects = Subject::visibleTo(Auth::user())
             ->when($selectedSection, fn ($q) => $q->where('sections_id', $selectedSection))
             ->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
         $filterTerms = AcademicTerm::where('is_active', true)->orderBy('term_name')->get(['id', 'term_name']);
 
-        return view('educator.scores.index', compact('scores', 'exportOptions', 'filterAssessments', 'filterSubjects', 'filterSections', 'filterTerms'));
+        return view('educator.scores.index', compact('classes', 'exportOptions', 'filterSubjects', 'filterSections', 'filterTerms'));
+    }
+
+    // Task 27: the class score matrix — students down the side, ONE COLUMN PER ASSESSMENT built
+    // from the assessment list itself (never a fixed set of quiz names). Modal fragment.
+    public function matrix(Request $request): View
+    {
+        $this->authorize('viewAny', Score::class);
+
+        [$subject, $section, $term, $assessments] = $this->classContext($request);
+
+        $scores = Score::visibleTo(Auth::user())
+            ->whereIn('assessment_id', $assessments->pluck('id'))
+            ->whereIn('tbl_scores.status', ['submitted', 'passed', 'failed'])
+            ->with('student:id,given_name,surname,user_id,profile_picture')
+            ->get();
+
+        $students = $this->classStudents($subject, $scores);
+
+        // cells[studentId][assessmentId] = ['best' => Score, 'attempts' => int]
+        $cells = [];
+        foreach ($scores->groupBy('student_id') as $studentId => $studentScores) {
+            foreach ($studentScores->groupBy('assessment_id') as $assessmentId => $attempts) {
+                $cells[$studentId][$assessmentId] = [
+                    // One definition of "best attempt", shared with the xlsx export.
+                    'best' => ScoreRowBuilder::bestAttempt($attempts),
+                    'attempts' => $attempts->count(),
+                ];
+            }
+        }
+
+        return view('educator.scores.matrix', compact('subject', 'section', 'term', 'assessments', 'students', 'cells'));
+    }
+
+    // Task 27: one student's full history for a class — every attempt of every assessment, with
+    // the per-question review and the retake grant. Replaces the matrix inside the same modal.
+    public function studentDetail(Request $request): View
+    {
+        $this->authorize('viewAny', Score::class);
+
+        [$subject, $section, $term, $assessments] = $this->classContext($request);
+        $studentId = (int) $request->validate(['student' => ['required', 'integer']])['student'];
+
+        $scores = Score::visibleTo(Auth::user())
+            ->whereIn('assessment_id', $assessments->pluck('id'))
+            ->whereIn('tbl_scores.status', ['submitted', 'passed', 'failed'])
+            ->with('student:id,given_name,surname,user_id,profile_picture')
+            ->latest('submitted_at')
+            ->get();
+
+        // 404 rather than render an empty shell for a student outside this class.
+        $student = $this->classStudents($subject, $scores)->firstWhere('id', $studentId);
+        abort_unless($student, 404);
+
+        $attempts = $scores->where('student_id', $studentId)->values();
+
+        // correct_answer is loaded SERVER-SIDE here (educator view) — never serialized to a
+        // student. withTrashed: a question deleted from the bank after the attempt must still
+        // resolve so historical review stays whole (Task 13).
+        $questions = Quiz::withTrashed()
+            ->whereIn('id', $attempts->flatMap(fn (Score $s) => $s->drawn_quiz_ids ?? [])->unique())
+            ->get()
+            ->keyBy('id');
+
+        return view('educator.scores.student', compact('subject', 'section', 'term', 'assessments', 'student', 'attempts', 'questions'));
+    }
+
+    /**
+     * Resolve + authorize a subject/section/term class context from query params, with its
+     * assessments. Every lookup runs through visibleTo, so another educator's ids 404.
+     *
+     * @return array{0: Subject, 1: Section, 2: AcademicTerm, 3: \Illuminate\Support\Collection}
+     */
+    private function classContext(Request $request): array
+    {
+        $data = $request->validate([
+            'subject' => ['required', 'integer'],
+            'section' => ['required', 'integer'],
+            'term' => ['required', 'integer'],
+        ]);
+
+        $user = Auth::user();
+        $subject = Subject::visibleTo($user)->findOrFail($data['subject']);
+        $section = Section::visibleTo($user)->findOrFail($data['section']);
+        $term = AcademicTerm::where('is_active', true)->findOrFail($data['term']);
+
+        $assessments = Assessment::visibleTo($user)
+            ->where('subject_id', $subject->id)
+            ->where('section_id', $section->id)
+            ->where('term', $term->id)
+            ->orderBy('assessment_code')
+            ->get(['id', 'uuid', 'assessment_code']);
+
+        return [$subject, $section, $term, $assessments];
+    }
+
+    /**
+     * Class roster, surname-first: enrolled students plus anyone who already has a score here
+     * (a student unenrolled after submitting must not silently vanish from the matrix).
+     */
+    private function classStudents(Subject $subject, $scores)
+    {
+        return Enrolled::visibleTo(Auth::user())
+            ->where('subject_id', $subject->id)
+            ->where('is_active', true)
+            ->with('student:id,given_name,surname,user_id,profile_picture')
+            ->get()
+            ->pluck('student')
+            ->merge($scores->pluck('student'))
+            ->filter()
+            ->unique('id')
+            ->sortBy([
+                [fn ($a, $b) => mb_strtolower($a->surname ?? '') <=> mb_strtolower($b->surname ?? ''), 'asc'],
+                [fn ($a, $b) => mb_strtolower($a->given_name ?? '') <=> mb_strtolower($b->given_name ?? ''), 'asc'],
+            ])
+            ->values();
     }
 
     public function destroy(Request $request, Score $score): JsonResponse|RedirectResponse

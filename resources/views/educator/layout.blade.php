@@ -24,7 +24,7 @@
             'active' => request()->routeIs('educator.scores.*'),
             'icon' => 'chart-simple',
             'children' => [
-                ['label' => 'Scores', 'url' => route('educator.scores.index'), 'active' => request()->routeIs('educator.scores.index', 'educator.scores.show')],
+                ['label' => 'Scores', 'url' => route('educator.scores.index'), 'active' => request()->routeIs('educator.scores.index', 'educator.scores.show', 'educator.scores.matrix', 'educator.scores.student')],
                 ['label' => 'Archived Scores', 'url' => route('educator.scores.deleted'), 'active' => request()->routeIs('educator.scores.deleted')],
             ],
         ],

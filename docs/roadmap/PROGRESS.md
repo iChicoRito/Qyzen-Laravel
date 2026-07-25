@@ -144,6 +144,21 @@ Conclusion: the dev build is verified working, not just green in isolation.
 - **Scheduled:** `php artisan backup:database` runs daily with overlap protection, writes to the private `database-backups` disk (`DATABASE_BACKUP_ROOT`), fails rather than retaining partial/table-skipping exports, emits restore-safe SQL, and prunes to the 7 most recent matching files.
 - **Hostinger:** create a Custom cron scheduled every minute with `/usr/bin/php /home/u560807207/domains/qyzen.space/public_html/artisan schedule:run`; hPanel owns the schedule and output settings, so the command has no cron prefix or shell redirection. See `docs/deployment/TASK15_PRODUCTION_RELIABILITY.md`.
 
+### Post-migration — Educator scores reorganized into class rows + score matrix (2026-07-25, Task 27)
+- `/educator/scores` is now a **class list** (Subject / Section / Term / Action), one row per
+  `(subject_id, section_id, term)` drawn from `Assessment::visibleTo` — a class with assessments but
+  no submissions still lists, so its roster is reachable.
+- The row's ⋮ → View opens the **score matrix** modal (`educator.scores.matrix`): a Student column
+  (`SURNAME, GIVEN NAME` over the student number), then **one column per assessment generated from
+  the assessment list** (never a fixed set), then Action. Cells show the best attempt as `7/10` with the attempt count beneath; enrolled
+  non-submitters get a row with a dash. Students are sorted by surname.
+- The matrix's ⋮ → View swaps the same modal to `educator.scores.student`: every attempt of every
+  assessment for that student, expandable to the per-question review (student answer vs. correct
+  answer), the per-attempt archive action, and the retake grant. A Back button returns to the matrix.
+- Grading, exports, offline upload, and archived scores are untouched. `ScoreRowBuilder::bestAttempt()`
+  is now public and shared by the xlsx export and the matrix, so "best attempt" has one definition.
+- Full suite green (354 passed). Summary: `prompts/tasks-summary/27.md`.
+
 ---
 
 ## What's next
