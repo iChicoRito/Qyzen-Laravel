@@ -2,8 +2,11 @@
      (same KTUI data-kt-drawer contract, same csrf-hidden-input + fetch conventions). Rendered
      only for educators — the endpoint itself is gated by role:educator, this just hides the UI. --}}
 <!-- AI Assistant -->
+{{-- ki-flash-circle, not a speech bubble: this button sits between ki-notification-status and
+     ki-messages in the topbar, and a third bubble-shaped glyph is indistinguishable from the chat
+     one at 18px. The circle-and-bolt silhouette reads differently at a glance. --}}
 <button class="relative kt-btn kt-btn-ghost kt-btn-icon size-9 rounded-full hover:bg-primary/10 hover:[&_i]:text-primary" data-kt-drawer-toggle="#assistant_drawer" id="assistant_btn" title="Academic assistant">
- <i class="ki-filled ki-technology-4 text-lg"></i>
+ <i class="ki-filled ki-flash-circle text-lg"></i>
 </button>
 <!--Assistant Drawer-->
 <div class="hidden kt-drawer kt-drawer-end card flex flex-col max-w-[90%] w-[450px] top-5 bottom-5 end-5 rounded-xl border border-border" data-kt-drawer="true" data-kt-drawer-container="body" id="assistant_drawer">
