@@ -61,5 +61,12 @@ class FortifyServiceProvider extends ServiceProvider
         RateLimiter::for('quiz-writes', function (Request $request) {
             return Limit::perMinute(60)->by((string) optional($request->user())->id ?: $request->ip());
         });
+
+        // Task 28: per-educator ceiling on the AI assistant. The provider's own quota is shared
+        // across the whole app (App\Services\Ai\GroqBudget) — this stops one educator from
+        // spending everyone's daily allowance, and caps how fast anyone can probe the guardrails.
+        RateLimiter::for('assistant', function (Request $request) {
+            return Limit::perMinute(10)->by((string) optional($request->user())->id ?: $request->ip());
+        });
     }
 }
