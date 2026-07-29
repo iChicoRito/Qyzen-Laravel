@@ -20,16 +20,9 @@ class StoreSectionRequest extends FormRequest
         return [
             'section_name' => ['required', 'string', 'max:255'],
             'academic_term_ids' => ['required', 'array', 'min:1'],
-            'academic_term_ids.*' => $this->termRule(),
+            'academic_term_ids.*' => [Rule::exists('tbl_academic_term', 'id')->where('is_active', true)],
             'is_active' => ['required', 'boolean'],
         ];
-    }
-
-    // Task 31: creating a section requires live terms. UpdateSectionRequest widens this so a
-    // section whose terms were later deactivated can still be saved.
-    protected function termRule(): array
-    {
-        return [Rule::exists('tbl_academic_term', 'id')->where('is_active', true)];
     }
 
     public function withValidator($validator): void

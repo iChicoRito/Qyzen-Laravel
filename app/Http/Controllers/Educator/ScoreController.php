@@ -126,10 +126,7 @@ class ScoreController extends Controller
             ->when($selectedSection, fn ($q) => $q->where('sections_id', $selectedSection))
             ->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
-        // Task 31: every term this educator actually has assessments in — not just the active one,
-        // or historical classes listed above would be unfilterable.
-        $filterTerms = AcademicTerm::whereIn('id', Assessment::visibleTo(Auth::user())->select('term'))
-            ->orderBy('term_name')->get(['id', 'term_name']);
+        $filterTerms = AcademicTerm::where('is_active', true)->orderBy('term_name')->get(['id', 'term_name']);
 
         return view('educator.scores.index', compact('classes', 'exportOptions', 'filterSubjects', 'filterSections', 'filterTerms'));
     }
@@ -140,7 +137,11 @@ class ScoreController extends Controller
     {
         $this->authorize('viewAny', Score::class);
 
-        [$subject, $section, $term, $assessments] = $this->classContext($request);
+        $context = $this->classContext($request);
+        if ($context === null) {
+            return $this->inactiveTermFragment();
+        }
+        [$subject, $section, $term, $assessments] = $context;
 
         $scores = Score::visibleTo(Auth::user())
             ->whereIn('assessment_id', $assessments->pluck('id'))
@@ -171,7 +172,11 @@ class ScoreController extends Controller
     {
         $this->authorize('viewAny', Score::class);
 
-        [$subject, $section, $term, $assessments] = $this->classContext($request);
+        $context = $this->classContext($request);
+        if ($context === null) {
+            return $this->inactiveTermFragment();
+        }
+        [$subject, $section, $term, $assessments] = $context;
         $studentId = (int) $request->validate(['student' => ['required', 'integer']])['student'];
 
         $scores = Score::visibleTo(Auth::user())
@@ -202,9 +207,13 @@ class ScoreController extends Controller
      * Resolve + authorize a subject/section/term class context from query params, with its
      * assessments. Every lookup runs through visibleTo, so another educator's ids 404.
      *
-     * @return array{0: Subject, 1: Section, 2: AcademicTerm, 3: \Illuminate\Support\Collection}
+     * Task 31: returns null instead of 404ing when the class exists but its term has been
+     * deactivated — the caller renders a notice fragment, because this is loaded into a modal
+     * where an error page would be injected verbatim. A genuinely unknown id still 404s.
+     *
+     * @return array{0: Subject, 1: Section, 2: AcademicTerm, 3: \Illuminate\Support\Collection}|null
      */
-    private function classContext(Request $request): array
+    private function classContext(Request $request): ?array
     {
         $data = $request->validate([
             'subject' => ['required', 'integer'],
@@ -213,12 +222,16 @@ class ScoreController extends Controller
         ]);
 
         $user = Auth::user();
-        $subject = Subject::visibleTo($user)->findOrFail($data['subject']);
-        $section = Section::visibleTo($user)->findOrFail($data['section']);
-        // Task 31: resolve the term by identity, not by active status. Deactivating a term must not
-        // turn its existing classes into 404s. A nonexistent id still 404s here, and a term this
-        // educator has no data in simply yields an empty $assessments below.
         $term = AcademicTerm::findOrFail($data['term']);
+        $subject = Subject::visibleTo($user)->find($data['subject']);
+        $section = Section::visibleTo($user)->find($data['section']);
+
+        // Owned but term-hidden → notice, not an error. Not owned / not real → 404 as before.
+        if ($subject === null || $section === null || ! $term->is_active) {
+            abort_unless($this->ownsHiddenClass($user, $data), 404);
+
+            return null;
+        }
 
         $assessments = Assessment::visibleTo($user)
             ->where('subject_id', $subject->id)
@@ -228,6 +241,19 @@ class ScoreController extends Controller
             ->get(['id', 'uuid', 'assessment_code']);
 
         return [$subject, $section, $term, $assessments];
+    }
+
+    /** True when the requested class is this educator's own but hidden by an inactive term. */
+    private function ownsHiddenClass($user, array $data): bool
+    {
+        return Subject::where('id', $data['subject'])->where('educator_id', $user->id)->exists()
+            && Section::where('id', $data['section'])->where('educator_id', $user->id)->exists();
+    }
+
+    /** Modal-safe "this term is inactive" fragment — the loader injects the response body as-is. */
+    private function inactiveTermFragment(): View
+    {
+        return view('educator.scores.inactive-term');
     }
 
     /**

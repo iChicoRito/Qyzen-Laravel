@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAcademicTerm;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,24 +10,27 @@ use Illuminate\Support\Facades\Storage;
 
 class LearningMaterial extends Model
 {
+    use HasAcademicTerm;
+
     public const PRIVATE_DISK = 'learning-materials';
 
     protected $table = 'tbl_learning_materials';
+
+    protected string $academicTermPath = 'subject.section.academicTerm';
 
     // D2: educator ownership / student enrollment (active material only). No admin
     // policy in source. Admins excluded.
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
-        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
-        // a term must not turn historical records into 404s. The active-term gate is a
-        // *current-workflow* filter and belongs only on the student's operational lists.
+        // Task 31: deactivating a term hides its records from educators and students alike.
+        $query->inActiveTerm();
+
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
         if ($user->hasRole('student')) {
             return $query->where($this->qualifyColumn('is_active'), true)
-                ->whereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true))
                 ->whereExists(fn ($q) => $q->selectRaw('1')
                     ->from('tbl_enrolled')
                     ->whereColumn('tbl_enrolled.educator_id', 'tbl_learning_materials.educator_id')

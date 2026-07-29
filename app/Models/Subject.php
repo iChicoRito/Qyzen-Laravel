@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAcademicTerm;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,7 +10,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Subject extends Model
 {
+    use HasAcademicTerm;
+
     protected $table = 'tbl_subjects';
+
+    protected string $academicTermPath = 'section.academicTerm';
 
     // D2: admin all / educator ownership (perm 'subjects:view' gated at Policy) /
     // student enrollment in this subject.
@@ -19,21 +24,21 @@ class Subject extends Model
             return $query;
         }
 
-        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
-        // a term must not turn historical records into 404s. The active-term gate is a
-        // *current-workflow* filter and belongs only on the student's operational lists.
+        // Task 31: deactivating a term hides its records from educators and students alike. The
+        // rows are not deleted — RedirectInactiveTermRecords turns a stale link to one of them into
+        // a notice rather than a 403/404 for the owning educator.
+        $query->inActiveTerm();
+
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
-        return $query
-            ->whereHas('section.academicTerm', fn ($term) => $term->where('is_active', true))
-            ->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('tbl_enrolled')
-                ->whereColumn('tbl_enrolled.educator_id', 'tbl_subjects.educator_id')
-                ->whereColumn('tbl_enrolled.subject_id', 'tbl_subjects.id')
-                ->where('tbl_enrolled.student_id', $user->id)
-                ->where('tbl_enrolled.is_active', true));
+        return $query->whereExists(fn ($q) => $q->selectRaw('1')
+            ->from('tbl_enrolled')
+            ->whereColumn('tbl_enrolled.educator_id', 'tbl_subjects.educator_id')
+            ->whereColumn('tbl_enrolled.subject_id', 'tbl_subjects.id')
+            ->where('tbl_enrolled.student_id', $user->id)
+            ->where('tbl_enrolled.is_active', true));
     }
 
     protected $fillable = ['educator_id', 'sections_id', 'subject_code', 'subject_name', 'is_active'];

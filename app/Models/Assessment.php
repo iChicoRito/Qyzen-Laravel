@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAcademicTerm;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,6 +12,9 @@ use Illuminate\Support\Str;
 
 class Assessment extends Model
 {
+    // scopeInActiveTerm is overridden below — an assessment has two terms, not one.
+    use HasAcademicTerm;
+
     protected $table = 'tbl_assessments';
 
     // Task 19: opaque route key — URLs bind by the random uuid, never the sequential id.
@@ -33,21 +37,35 @@ class Assessment extends Model
             return $query;
         }
 
-        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
-        // a term must not turn historical records into 404s. The active-term gate is a
-        // *current-workflow* filter and belongs only on the student's operational lists.
+        // Task 31: deactivating a term hides its records. NOTE an assessment carries its own `term`
+        // column, which may differ from the term of the section it is attached to — both must be
+        // active for the assessment to be usable, see scopeInActiveTerm().
+        $query->inActiveTerm();
+
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
+        return $query->whereExists(fn ($q) => $q->selectRaw('1')
+            ->from('tbl_enrolled')
+            ->whereColumn('tbl_enrolled.educator_id', 'tbl_assessments.educator_id')
+            ->whereColumn('tbl_enrolled.subject_id', 'tbl_assessments.subject_id')
+            ->where('tbl_enrolled.student_id', $user->id)
+            ->where('tbl_enrolled.is_active', true));
+    }
+
+    /**
+     * Task 31: an assessment sits under TWO terms — the one on its own `term` column (what the
+     * educator picked) and the one on the section it is attached to. Those can disagree: the bug
+     * that started this was an assessment filed under MIDTERM hanging off a PRELIM section, which
+     * made the scores index list a class the preview then refused to resolve (404). Requiring both
+     * to be active is what keeps every list and every lookup agreeing on what is visible.
+     */
+    public function scopeInActiveTerm(Builder $query): Builder
+    {
         return $query
             ->whereHas('academicTerm', fn ($term) => $term->where('is_active', true))
-            ->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('tbl_enrolled')
-                ->whereColumn('tbl_enrolled.educator_id', 'tbl_assessments.educator_id')
-                ->whereColumn('tbl_enrolled.subject_id', 'tbl_assessments.subject_id')
-                ->where('tbl_enrolled.student_id', $user->id)
-                ->where('tbl_enrolled.is_active', true));
+            ->whereHas('section.academicTerm', fn ($term) => $term->where('is_active', true));
     }
 
     // Task 29: archiving is a listing concern only. visibleTo deliberately does NOT apply these —

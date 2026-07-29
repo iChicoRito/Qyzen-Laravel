@@ -33,6 +33,7 @@ use App\Http\Controllers\Student\MaterialController as StudentMaterialController
 use App\Http\Controllers\Student\QuizController as StudentQuizController;
 use App\Http\Controllers\Student\ScoreController as StudentScoreController;
 use App\Http\Controllers\Student\SubjectController as StudentSubjectController;
+use App\Http\Middleware\RedirectInactiveTermRecords;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -166,8 +167,10 @@ Route::middleware(['auth', 'verified', 'role:admin'])
     });
 
 // Stage G — Educator features. Ownership-gated: every list query carries visibleTo, every
-// route a D-Policy. role:educator middleware bounces non-educators.
-Route::middleware(['auth', 'verified', 'role:educator'])
+// route a D-Policy. role:educator middleware bounces non-educators. Task 31:
+// RedirectInactiveTermRecords turns a stale link to the educator's own inactive-term record into
+// a notice instead of letting it render (or error).
+Route::middleware(['auth', 'verified', 'role:educator', RedirectInactiveTermRecords::class])
     ->prefix('educator')->name('educator.')->group(function () {
         Route::get('/dashboard', [EducatorDashboardController::class, 'index'])->name('dashboard');
         Route::get('/calendar', [CalendarController::class, 'index'])->name('calendar');

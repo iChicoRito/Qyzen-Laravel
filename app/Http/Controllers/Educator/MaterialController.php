@@ -71,10 +71,7 @@ class MaterialController extends Controller
 
         $filterSubjects = Subject::visibleTo(Auth::user())->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
-        // Task 31: every term this educator actually has sections in — not just the active one,
-        // or materials from a deactivated term would be unfilterable.
-        $filterTerms = AcademicTerm::whereIn('id', Section::visibleTo(Auth::user())->select('academic_term_id'))
-            ->orderBy('term_name')->get(['id', 'term_name']);
+        $filterTerms = AcademicTerm::where('is_active', true)->orderBy('term_name')->get(['id', 'term_name']);
 
         return view('educator.materials.index', compact('groups', 'materials', 'filterSubjects', 'filterSections', 'filterTerms'));
     }

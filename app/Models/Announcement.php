@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAcademicTerm;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,6 +11,9 @@ use Illuminate\Support\Facades\Storage;
 
 class Announcement extends Model
 {
+    // scopeInActiveTerm is overridden below — an announcement may target many subjects, or none.
+    use HasAcademicTerm;
+
     public const PRIVATE_DISK = 'announcement-images';
 
     protected $table = 'tbl_announcements';
@@ -33,13 +37,22 @@ class Announcement extends Model
         return null;
     }
 
+    // Task 31: a global announcement has no subject and therefore no term — it is never hidden.
+    // A targeted one survives while any of its subjects sits in an active term.
+    public function scopeInActiveTerm(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q): void {
+            $q->whereDoesntHave('subjects')
+                ->orWhereHas('subjects.section.academicTerm', fn ($term) => $term->where('is_active', true));
+        });
+    }
+
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
-        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
-        // a term must not turn historical records into 404s. The active-term gate is a
-        // *current-workflow* filter and belongs only on the student's operational lists below.
+        // Task 31: deactivating a term hides announcements targeted at that term's subjects. A
+        // global announcement targets no subject, so it has no term and always stays.
         if ($user->hasRole('educator')) {
-            return $query->where($this->qualifyColumn('educator_id'), $user->id);
+            return $query->where($this->qualifyColumn('educator_id'), $user->id)->inActiveTerm();
         }
 
         if (! $user->hasRole('student')) {

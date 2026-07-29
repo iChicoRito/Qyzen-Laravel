@@ -38,7 +38,7 @@ class StoreAssessmentRequest extends FormRequest
             'assessment_code' => ['required', 'string', 'max:255'],
             'subject_ids' => ['required', 'array', 'min:1'],
             'subject_ids.*' => [Rule::exists('tbl_subjects', 'id')->where('educator_id', Auth::id())],
-            'term' => $this->termRule(),
+            'term' => ['required', Rule::exists('tbl_academic_term', 'id')->where('is_active', true)],
             'time_limit' => ['required', 'string', 'max:255'],
             'cheating_attempts' => ['nullable', 'integer', 'min:0'],
             'is_shuffle' => ['required', 'boolean'],
@@ -54,13 +54,6 @@ class StoreAssessmentRequest extends FormRequest
             'start_time' => ['required'],
             'end_time' => ['required'],
         ];
-    }
-
-    // Task 31: creating an assessment requires a live term. UpdateAssessmentRequest widens this
-    // so an existing assessment whose term was later deactivated can still be saved.
-    protected function termRule(): array
-    {
-        return ['required', Rule::exists('tbl_academic_term', 'id')->where('is_active', true)];
     }
 
     public function shouldNotifyStudents(): bool

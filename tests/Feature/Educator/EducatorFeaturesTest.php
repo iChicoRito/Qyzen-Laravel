@@ -315,9 +315,10 @@ class EducatorFeaturesTest extends TestCase
         $this->assertNotNull($older->fresh());
     }
 
-    // Task 31: rolling the active term from PRELIM to MIDTERM must not 404/403 the educator out of
-    // PRELIM's existing records.
-    public function test_inactive_term_still_allows_educator_score_detail_route(): void
+    // Task 31: a stale link to the educator's OWN record in a deactivated term must not render an
+    // error page — it redirects with a notice. Another educator's record still 403s (covered by
+    // the cross-educator tests above), and a record that does not exist still 404s.
+    public function test_inactive_term_redirects_educator_instead_of_erroring(): void
     {
         $subject = $this->subject($this->eduA);
         $assessment = Assessment::create($this->assessmentModelData($subject));
@@ -332,20 +333,48 @@ class EducatorFeaturesTest extends TestCase
 
         $this->actingAs($this->eduA)
             ->get(route('educator.scores.show', $score))
-            ->assertOk();
+            ->assertRedirect(route('educator.dashboard'))
+            ->assertSessionHas('status');
+
+        $this->actingAs($this->eduA)
+            ->get(route('educator.assessments.edit', $assessment))
+            ->assertRedirect(route('educator.dashboard'));
+
+        // Ownership still wins: educator B gets the error, not the soft notice.
+        $this->actingAs($this->eduB)
+            ->get(route('educator.scores.show', $score))
+            ->assertForbidden();
     }
 
-    // Task 31 regression: the reported failure — /educator/scores 404s when previewing a class
-    // whose term was deactivated. Index row, matrix modal and per-student detail must all survive,
-    // while a genuinely nonexistent term id still 404s.
-    public function test_educator_can_still_open_score_matrix_after_term_is_deactivated(): void
+    // Task 31: the term guard asks only "is this row's term active?". A soft-deleted score in a
+    // live term is archived, not term-hidden, and must stay restorable.
+    public function test_archived_score_in_an_active_term_is_not_treated_as_term_hidden(): void
     {
         $subject = $this->subject($this->eduA);
         $assessment = Assessment::create($this->assessmentModelData($subject));
-        Enrolled::create([
+        $score = Score::create([
             'student_id' => $this->student->id, 'educator_id' => $this->eduA->id,
-            'subject_id' => $subject->id, 'is_active' => true,
+            'assessment_id' => $assessment->id, 'subject_id' => $subject->id,
+            'section_id' => $subject->sections_id, 'score' => 4, 'total_questions' => 5,
+            'status' => 'failed', 'is_passed' => false, 'student_answer' => [],
         ]);
+        $score->delete();
+
+        $this->assertTrue($score->termIsActive());
+
+        $this->actingAs($this->eduA)
+            ->patchJson(route('educator.scores.restore', $score))
+            ->assertOk();
+    }
+
+    // Task 31 regression: the reported failure. An assessment filed under an ACTIVE term but
+    // hanging off a section belonging to an INACTIVE one used to list on /educator/scores and then
+    // 404 when previewed, because the index and the preview tested different terms. Both must now
+    // agree that it is hidden, and the preview must degrade to a notice rather than an error.
+    public function test_assessment_in_active_term_on_inactive_term_section_is_hidden_everywhere(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $assessment = Assessment::create($this->assessmentModelData($subject));
         Score::create([
             'student_id' => $this->student->id, 'educator_id' => $this->eduA->id,
             'assessment_id' => $assessment->id, 'subject_id' => $subject->id,
@@ -354,32 +383,45 @@ class EducatorFeaturesTest extends TestCase
             'submitted_at' => now(),
         ]);
 
+        // The section stays on the now-inactive term while the assessment points at a live one —
+        // exactly the shape that produced the 404.
+        $liveTerm = AcademicTerm::create([
+            'term_name' => 'MIDTERM', 'semester' => '1st Semester',
+            'academic_year_id' => $this->term->academic_year_id, 'is_active' => true,
+        ]);
+        $assessment->update(['term' => $liveTerm->id]);
         $this->term->update(['is_active' => false]);
 
         $classParams = [
-            'subject' => $subject->id, 'section' => $subject->sections_id, 'term' => $this->term->id,
+            'subject' => $subject->id, 'section' => $subject->sections_id, 'term' => $liveTerm->id,
         ];
 
-        // The class row still lists on the index.
+        // Not listed.
         $this->actingAs($this->eduA)
             ->get(route('educator.scores.index'))
             ->assertOk()
-            ->assertSee($subject->subject_code);
+            ->assertDontSee($subject->subject_code);
 
-        // The preview (matrix) modal resolves and still shows the recorded attempt.
+        // Previewed anyway (stale page): a notice, not a 404.
         $this->actingAs($this->eduA)
             ->get(route('educator.scores.matrix', $classParams))
             ->assertOk()
-            ->assertSee('3/5');
+            ->assertSee('inactive term')
+            ->assertDontSee('3/5');
 
-        // Per-student detail resolves too.
         $this->actingAs($this->eduA)
             ->get(route('educator.scores.student', $classParams + ['student' => $this->student->id]))
-            ->assertOk();
+            ->assertOk()
+            ->assertSee('inactive term');
 
-        // A term that genuinely does not exist must still 404.
+        // A term that genuinely does not exist still 404s.
         $this->actingAs($this->eduA)
             ->get(route('educator.scores.matrix', ['subject' => $subject->id, 'section' => $subject->sections_id, 'term' => 999999]))
+            ->assertNotFound();
+
+        // Another educator's ids still 404 rather than leaking the notice.
+        $this->actingAs($this->eduB)
+            ->get(route('educator.scores.matrix', $classParams))
             ->assertNotFound();
     }
 

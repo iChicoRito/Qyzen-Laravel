@@ -170,10 +170,10 @@ class AuthorizationMatrixTest extends TestCase
         $this->assertFalse(LearningMaterial::visibleTo($this->otherStudent)->whereKey($mat->id)->exists());
     }
 
-    // Task 31: deactivating a term is a *current-workflow* signal, not a delete. It hides the term's
-    // resources from students' operational lists, but the owning educator keeps full access to the
-    // historical records — otherwise every educator page 404s the moment a term rolls over.
-    public function test_inactive_term_hides_related_resources_from_students_but_not_educators(): void
+    // Task 31: deactivating a term hides everything filed under it from educators and students
+    // alike. The rows are not deleted, and the owning educator gets a redirect + notice rather
+    // than an error page — see test_inactive_term_redirects_educator_instead_of_erroring.
+    public function test_inactive_term_hides_related_resources_from_educators_and_students(): void
     {
         $quiz = Quiz::create([
             'subject_id' => $this->subjectA->id, 'educator_id' => $this->eduA->id,
@@ -191,23 +191,22 @@ class AuthorizationMatrixTest extends TestCase
 
         $this->sectionA->academicTerm->update(['is_active' => false]);
 
-        $this->assertTrue(Section::visibleTo($this->eduA)->whereKey($this->sectionA->id)->exists());
+        $this->assertFalse(Section::visibleTo($this->eduA)->whereKey($this->sectionA->id)->exists());
         $this->assertFalse(Section::visibleTo($this->student)->whereKey($this->sectionA->id)->exists());
-        $this->assertTrue(Subject::visibleTo($this->eduA)->whereKey($this->subjectA->id)->exists());
+        $this->assertFalse(Subject::visibleTo($this->eduA)->whereKey($this->subjectA->id)->exists());
         $this->assertFalse(Subject::visibleTo($this->student)->whereKey($this->subjectA->id)->exists());
-        $this->assertTrue(Assessment::visibleTo($this->eduA)->whereKey($this->assessmentA->id)->exists());
+        $this->assertFalse(Assessment::visibleTo($this->eduA)->whereKey($this->assessmentA->id)->exists());
         $this->assertFalse(Assessment::visibleTo($this->student)->whereKey($this->assessmentA->id)->exists());
-        $this->assertTrue(Quiz::visibleTo($this->eduA)->whereKey($quiz->id)->exists());
+        $this->assertFalse(Quiz::visibleTo($this->eduA)->whereKey($quiz->id)->exists());
         $this->assertFalse(Quiz::visibleTo($this->student)->whereKey($quiz->id)->exists());
-        $this->assertTrue(Score::visibleTo($this->eduA)->whereKey($score->id)->exists());
+        $this->assertFalse(Score::visibleTo($this->eduA)->whereKey($score->id)->exists());
         $this->assertFalse(Score::visibleTo($this->student)->whereKey($score->id)->exists());
-        $this->assertTrue(LearningMaterial::visibleTo($this->eduA)->whereKey($material->id)->exists());
+        $this->assertFalse(LearningMaterial::visibleTo($this->eduA)->whereKey($material->id)->exists());
         $this->assertFalse(LearningMaterial::visibleTo($this->student)->whereKey($material->id)->exists());
 
-        // Ownership is still the gate — another educator's inactive-term records stay invisible.
-        $this->assertFalse(Section::visibleTo($this->eduB)->whereKey($this->sectionA->id)->exists());
-        $this->assertFalse(Assessment::visibleTo($this->eduB)->whereKey($this->assessmentA->id)->exists());
-        $this->assertFalse(Score::visibleTo($this->eduB)->whereKey($score->id)->exists());
+        // The rows still exist — hidden, not deleted.
+        $this->assertNotNull(Score::find($score->id));
+        $this->assertNotNull(Assessment::find($this->assessmentA->id));
 
         $this->assertTrue(Assessment::visibleTo($this->admin)->whereKey($this->assessmentA->id)->exists());
         $this->assertTrue(Score::visibleTo($this->admin)->whereKey($score->id)->exists());

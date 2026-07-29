@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAcademicTerm;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,6 +12,7 @@ use Illuminate\Support\Str;
 
 class Score extends Model
 {
+    use HasAcademicTerm;
     use SoftDeletes;
 
     protected $table = 'tbl_scores';
@@ -28,6 +30,13 @@ class Score extends Model
         }
 
         return ['labels' => array_keys($byWeek), 'data' => array_values($byWeek)];
+    }
+
+    // A score inherits its assessment's term test (both the assessment's own term and its
+    // section's), rather than naming a path of its own.
+    public function scopeInActiveTerm(Builder $query): Builder
+    {
+        return $query->whereHas('assessment', fn (Builder $a) => $a->inActiveTerm());
     }
 
     // Task 19: opaque route key — URLs bind by the random uuid, never the sequential id.
@@ -48,16 +57,15 @@ class Score extends Model
             return $query;
         }
 
-        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
-        // a term must not turn historical records into 404s. The active-term gate is a
-        // *current-workflow* filter and belongs only on the student's operational lists.
+        // Task 31: deactivating a term hides its records. Delegates to Assessment so a score is
+        // hidden by BOTH the assessment's own term and its section's term — the two can disagree.
+        $query->inActiveTerm();
+
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
-        return $query
-            ->whereHas('assessment.academicTerm', fn ($term) => $term->where('is_active', true))
-            ->where($this->qualifyColumn('student_id'), $user->id);
+        return $query->where($this->qualifyColumn('student_id'), $user->id);
     }
 
     protected $fillable = [
