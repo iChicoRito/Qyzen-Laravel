@@ -218,6 +218,7 @@ class PrivateMessagingTest extends TestCase
         $this->assertStringContainsString('kt-alert kt-alert-light kt-alert-success', $html);
         $this->assertStringContainsString('data-message-alert="assessment_access_granted"', $html);
         $this->assertStringContainsString('Special access granted', $html);
+        $this->assertStringContainsString('kt-alert-title kt-alert-accent-success', $html);
         // The alert carries no bubble chrome and no edit/delete affordance...
         $this->assertStringNotContainsString('data-message-edit="'.$alert->id.'"', $html);
         $this->assertStringNotContainsString('data-message-delete="'.$alert->id.'"', $html);
@@ -256,6 +257,9 @@ class PrivateMessagingTest extends TestCase
         $this->assertStringContainsString('kt-alert kt-alert-light kt-alert-destructive', $html);
         $this->assertStringNotContainsString('kt-alert-warning', $html);
         $this->assertStringContainsString('Assessment exemption', $html);
+        // The heading and the icon carry the variant's accent colour, not plain foreground.
+        $this->assertStringContainsString('kt-alert-title kt-alert-accent-destructive', $html);
+        $this->assertStringContainsString('ki-shield-cross text-lg kt-alert-accent-destructive', $html);
         $this->assertStringContainsString('You have been exempted from Long Quiz.', $html);
         $this->assertStringNotContainsString('Reason: <', $html);
         // One statement, one label — never the doubled text Task 30 was raised for.

@@ -7,3 +7,31 @@
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
 }
+
+/* Task 30: accent colour for the heading + icon of a system-message alert (exemption /
+   special access) in the conversation thread.
+
+   Defined here rather than reusing a Metronic utility because the compiled bundle ships no
+   `.text-success` at all, and no dark: variants for these colours — and each single colour
+   fails WCAG AA in one of the two themes. Values are Tailwind's own red/green steps, picked
+   per theme against the alert's 5-10% tinted background:
+
+     light  red-600 4.57:1   green-700 4.72:1
+     dark   red-400 5.97:1   green-400 8.93:1
+
+   The alert body text stays on --foreground; only the heading and icon take these. */
+.kt-alert-accent-destructive {
+    color: oklch(57.7% 0.245 27.325); /* red-600 */
+}
+
+.kt-alert-accent-success {
+    color: oklch(52.7% 0.154 150.069); /* green-700 */
+}
+
+.dark .kt-alert-accent-destructive {
+    color: oklch(70.4% 0.191 22.216); /* red-400 */
+}
+
+.dark .kt-alert-accent-success {
+    color: oklch(79.2% 0.209 151.711); /* green-400 */
+}

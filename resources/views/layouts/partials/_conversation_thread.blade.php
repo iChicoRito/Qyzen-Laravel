@@ -15,13 +15,15 @@
  {{-- Task 29: system-generated messages (exemption / special access) render as a KTUI alert
       spanning the thread — they are announcements, not conversation, so no avatar, no bubble
       tail, no edit/delete. --}}
- @php [$variant, $icon, $heading] = $message->alertStyle(); @endphp
+ @php [$variant, $icon, $heading, $accent] = $message->alertStyle(); @endphp
  <div class="px-5" data-message-id="{{ $message->id }}" data-message-alert="{{ $message->kind }}">
   <div class="kt-alert kt-alert-light kt-alert-{{ $variant }} kt-alert-outline items-start">
-   {{-- text-lg: the kt-alert icon sizing rule targets svg, so an <i> keenicon needs its own size. --}}
-   <div class="kt-alert-icon"><i class="ki-filled ki-{{ $icon }} text-lg"></i></div>
+   {{-- text-lg: the kt-alert icon sizing rule targets svg, so an <i> keenicon needs its own size.
+        The accent colours the heading and icon; the description stays on --foreground so the
+        actual reading text keeps full contrast. --}}
+   <div class="kt-alert-icon"><i class="ki-filled ki-{{ $icon }} text-lg {{ $accent }}"></i></div>
    <div class="kt-alert-content">
-    <div class="kt-alert-title">{{ $heading }}</div>
+    <div class="kt-alert-title {{ $accent }}">{{ $heading }}</div>
     <div class="kt-alert-description">{{ $message->displayContent() }}</div>
    </div>
   </div>

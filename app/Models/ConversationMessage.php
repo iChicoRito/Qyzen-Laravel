@@ -13,13 +13,16 @@ class ConversationMessage extends Model
     protected $fillable = ['conversation_id', 'sender_user_id', 'content', 'kind', 'edited_at', 'message_deleted_at'];
 
     /**
-     * Task 30: kind => [alert variant, keenicon, heading] for system messages rendered as alerts.
-     * Variants are fixed by the spec — exemption is destructive (something was taken away),
-     * special access is success (something was granted).
+     * Task 30: kind => [alert variant, keenicon, heading, accent text class] for system messages
+     * rendered as alerts. Variants are fixed by the spec — exemption is destructive (something was
+     * taken away), special access is success (something was granted).
+     *
+     * The accent class colours the heading and icon; it is defined in resources/css/app.css
+     * because the Metronic bundle has no `.text-success` and no dark-mode variants for these.
      */
     public const ALERT_KINDS = [
-        'assessment_exempted' => ['destructive', 'shield-cross', 'Assessment exemption'],
-        'assessment_access_granted' => ['success', 'shield-tick', 'Special access granted'],
+        'assessment_exempted' => ['destructive', 'shield-cross', 'Assessment exemption', 'kt-alert-accent-destructive'],
+        'assessment_access_granted' => ['success', 'shield-tick', 'Special access granted', 'kt-alert-accent-success'],
     ];
 
     protected $casts = [
@@ -53,10 +56,10 @@ class ConversationMessage extends Model
         return ! $this->isDeleted() && isset(self::ALERT_KINDS[$this->kind]);
     }
 
-    /** @return array{0: string, 1: string, 2: string} variant, icon, heading */
+    /** @return array{0: string, 1: string, 2: string, 3: string} variant, icon, heading, accent */
     public function alertStyle(): array
     {
-        return self::ALERT_KINDS[$this->kind] ?? ['light', 'information-2', 'Notice'];
+        return self::ALERT_KINDS[$this->kind] ?? ['light', 'information-2', 'Notice', ''];
     }
 
     /** What renders in the thread — never the stale content once deleted. */
