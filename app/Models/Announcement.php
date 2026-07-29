@@ -43,7 +43,7 @@ class Announcement extends Model
     {
         return $query->where(function (Builder $q): void {
             $q->whereDoesntHave('subjects')
-                ->orWhereHas('subjects.section.academicTerm', fn ($term) => $term->where('is_active', true));
+                ->orWhereHas('subjects.section.terms', fn ($term) => $term->where('is_active', true));
         });
     }
 

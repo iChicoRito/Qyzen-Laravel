@@ -21,6 +21,16 @@ class Assessment extends Model
     protected static function booted(): void
     {
         static::creating(fn (self $m) => $m->uuid ??= (string) Str::uuid());
+
+        // Task 31: filing an assessment under a term means that term's classes include this
+        // section. Nothing used to record that, so rolling PRELIM → MIDTERM left every section
+        // behind on PRELIM and deactivating it hid the new term's work too. Done on save (not in
+        // the controller) so imports and duplication are covered by the same rule.
+        static::saved(function (self $m): void {
+            if ($m->section_id && $m->term) {
+                Section::find($m->section_id)?->terms()->syncWithoutDetaching([$m->term]);
+            }
+        });
     }
 
     public function getRouteKeyName(): string
@@ -56,16 +66,16 @@ class Assessment extends Model
 
     /**
      * Task 31: an assessment sits under TWO terms — the one on its own `term` column (what the
-     * educator picked) and the one on the section it is attached to. Those can disagree: the bug
-     * that started this was an assessment filed under MIDTERM hanging off a PRELIM section, which
-     * made the scores index list a class the preview then refused to resolve (404). Requiring both
-     * to be active is what keeps every list and every lookup agreeing on what is visible.
+     * educator picked) and the terms its section is taught in. Those used to disagree: an
+     * assessment filed under MIDTERM hanging off a PRELIM-only section made the scores index list
+     * a class the preview then refused to resolve (404). The saved() hook above now keeps them in
+     * step, and requiring both here is what makes every list and lookup agree on what is visible.
      */
     public function scopeInActiveTerm(Builder $query): Builder
     {
         return $query
             ->whereHas('academicTerm', fn ($term) => $term->where('is_active', true))
-            ->whereHas('section.academicTerm', fn ($term) => $term->where('is_active', true));
+            ->whereHas('section.terms', fn ($term) => $term->where('is_active', true));
     }
 
     // Task 29: archiving is a listing concern only. visibleTo deliberately does NOT apply these —

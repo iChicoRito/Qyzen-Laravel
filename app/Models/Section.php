@@ -15,7 +15,24 @@ class Section extends Model
 
     protected $table = 'tbl_sections';
 
-    protected string $academicTermPath = 'academicTerm';
+    // Task 31: the tbl_sections_term pivot is the truth — a section may be taught across several
+    // terms, and terms()->sync() is what the create/edit forms write. The legacy academic_term_id
+    // column is only the creation-time default and must NOT drive visibility, or a section carried
+    // from PRELIM into MIDTERM vanishes the moment PRELIM is deactivated.
+    protected string $academicTermPath = 'terms';
+
+    // ...which only holds if the pivot is never empty. Sections get created in plenty of places
+    // that set academic_term_id and nothing else (seeders, imports, direct Section::create), so
+    // mirror the primary term into the pivot on every save. Callers that then sync() an explicit
+    // term list still win — store/update pass academic_term_ids[0] as the primary, so it survives.
+    protected static function booted(): void
+    {
+        static::saved(function (self $section): void {
+            if ($section->academic_term_id) {
+                $section->terms()->syncWithoutDetaching([$section->academic_term_id]);
+            }
+        });
+    }
 
     // D2: admin all / educator ownership (perm 'sections:view' gated at Policy) /
     // student enrollment via a subject in this section.

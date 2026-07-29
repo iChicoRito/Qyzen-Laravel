@@ -19,7 +19,7 @@ class Quiz extends Model
 
     protected $table = 'tbl_quizzes';
 
-    protected string $academicTermPath = 'subject.section.academicTerm';
+    protected string $academicTermPath = 'subject.section.terms';
 
     // D2: educator ownership / student enrollment (educator+subject). No admin policy
     // in source (questions are never browsed by admin); admins still excluded here.

@@ -367,10 +367,59 @@ class EducatorFeaturesTest extends TestCase
             ->assertOk();
     }
 
-    // Task 31 regression: the reported failure. An assessment filed under an ACTIVE term but
-    // hanging off a section belonging to an INACTIVE one used to list on /educator/scores and then
-    // 404 when previewed, because the index and the preview tested different terms. Both must now
-    // agree that it is hidden, and the preview must degrade to a notice rather than an error.
+    // Task 31: a section is taught in whatever terms tbl_sections_term says, not whatever the
+    // legacy academic_term_id column happens to hold. Carrying a section from PRELIM into MIDTERM
+    // must survive PRELIM being deactivated.
+    public function test_section_stays_visible_while_any_of_its_linked_terms_is_active(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::find($subject->sections_id);
+
+        $live = AcademicTerm::create([
+            'term_name' => 'MIDTERM', 'semester' => '1st Semester',
+            'academic_year_id' => $this->term->academic_year_id, 'is_active' => true,
+        ]);
+        $section->terms()->syncWithoutDetaching([$live->id]);   // now taught in both
+        $this->term->update(['is_active' => false]);            // legacy column still points here
+
+        $this->assertTrue(Section::visibleTo($this->eduA)->whereKey($section->id)->exists());
+        $this->assertTrue(Subject::visibleTo($this->eduA)->whereKey($subject->id)->exists());
+
+        // Drop the surviving link and it disappears like anything else in a dead term.
+        $section->terms()->detach($live->id);
+        $this->assertFalse(Section::visibleTo($this->eduA)->whereKey($section->id)->exists());
+    }
+
+    // Task 31: filing an assessment under a term is what tells the app the section is taught in
+    // that term. Without this, a term rollover strands every section on the old term.
+    public function test_saving_an_assessment_links_its_section_to_that_term(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::find($subject->sections_id);
+
+        $live = AcademicTerm::create([
+            'term_name' => 'MIDTERM', 'semester' => '1st Semester',
+            'academic_year_id' => $this->term->academic_year_id, 'is_active' => true,
+        ]);
+        $this->assertNotContains($live->id, $section->terms()->pluck('tbl_academic_term.id')->all());
+
+        Assessment::create(array_merge($this->assessmentModelData($subject), ['term' => $live->id]));
+
+        $this->assertContains($live->id, $section->terms()->pluck('tbl_academic_term.id')->all());
+
+        // And the consequence that matters: deactivating the old term no longer hides the new
+        // term's work.
+        $this->term->update(['is_active' => false]);
+        $this->assertTrue(Section::visibleTo($this->eduA)->whereKey($section->id)->exists());
+        $this->assertSame(1, Assessment::visibleTo($this->eduA)->where('term', $live->id)->count());
+    }
+
+    // Task 31 regression: the reported failure. An assessment filed under an ACTIVE term while its
+    // section was linked only to an INACTIVE one used to list on /educator/scores and then 404 when
+    // previewed, because the index and the preview tested different terms. New saves can no longer
+    // create that shape (Assessment::saved links the section), but pre-backfill rows can still hold
+    // it, so the detach below reproduces it deliberately. Index and preview must now agree that it
+    // is hidden, and the preview must degrade to a notice rather than an error.
     public function test_assessment_in_active_term_on_inactive_term_section_is_hidden_everywhere(): void
     {
         $subject = $this->subject($this->eduA);
@@ -383,13 +432,13 @@ class EducatorFeaturesTest extends TestCase
             'submitted_at' => now(),
         ]);
 
-        // The section stays on the now-inactive term while the assessment points at a live one —
-        // exactly the shape that produced the 404.
         $liveTerm = AcademicTerm::create([
             'term_name' => 'MIDTERM', 'semester' => '1st Semester',
             'academic_year_id' => $this->term->academic_year_id, 'is_active' => true,
         ]);
         $assessment->update(['term' => $liveTerm->id]);
+        // Legacy shape: the section is NOT taught in the assessment's term.
+        Section::find($subject->sections_id)->terms()->detach($liveTerm->id);
         $this->term->update(['is_active' => false]);
 
         $classParams = [

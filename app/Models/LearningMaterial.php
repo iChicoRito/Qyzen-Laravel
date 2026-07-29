@@ -16,7 +16,7 @@ class LearningMaterial extends Model
 
     protected $table = 'tbl_learning_materials';
 
-    protected string $academicTermPath = 'subject.section.academicTerm';
+    protected string $academicTermPath = 'subject.section.terms';
 
     // D2: educator ownership / student enrollment (active material only). No admin
     // policy in source. Admins excluded.

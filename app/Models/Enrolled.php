@@ -13,7 +13,7 @@ class Enrolled extends Model
 
     protected $table = 'tbl_enrolled';
 
-    protected string $academicTermPath = 'subject.section.academicTerm';
+    protected string $academicTermPath = 'subject.section.terms';
 
     // D2: admin all / educator ownership / student own enrollments.
     public function scopeVisibleTo(Builder $query, User $user): Builder

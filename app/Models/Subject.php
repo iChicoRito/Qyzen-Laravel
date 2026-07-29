@@ -14,7 +14,7 @@ class Subject extends Model
 
     protected $table = 'tbl_subjects';
 
-    protected string $academicTermPath = 'section.academicTerm';
+    protected string $academicTermPath = 'section.terms';
 
     // D2: admin all / educator ownership (perm 'subjects:view' gated at Policy) /
     // student enrollment in this subject.
