@@ -17,13 +17,16 @@ class Enrolled extends Model
             return $query;
         }
 
-        $query->whereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true));
-
+        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
+        // a term must not turn historical records into 404s. The active-term gate is a
+        // *current-workflow* filter and belongs only on the student's operational lists.
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
-        return $query->where($this->qualifyColumn('student_id'), $user->id);
+        return $query
+            ->whereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true))
+            ->where($this->qualifyColumn('student_id'), $user->id);
     }
 
     protected $fillable = ['student_id', 'educator_id', 'subject_id', 'is_active'];

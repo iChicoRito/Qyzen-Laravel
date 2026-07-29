@@ -144,7 +144,7 @@ class AssessmentController extends Controller
     {
         $this->authorize('update', $assessment);
 
-        return view('educator.assessments.edit', ['assessment' => $assessment] + $this->formData());
+        return view('educator.assessments.edit', ['assessment' => $assessment] + $this->formData($assessment));
     }
 
     public function duplicate(Assessment $assessment): View
@@ -154,7 +154,7 @@ class AssessmentController extends Controller
         $duplicate = $assessment->replicate();
         $duplicate->assessment_code = substr((string) $assessment->assessment_code, 0, 250).' Copy';
 
-        return view('educator.assessments.duplicate', ['assessment' => $duplicate, 'sourceAssessment' => $assessment] + $this->formData());
+        return view('educator.assessments.duplicate', ['assessment' => $duplicate, 'sourceAssessment' => $assessment] + $this->formData($assessment));
     }
 
     public function storeDuplicate(UpdateAssessmentRequest $request, Assessment $assessment): JsonResponse|RedirectResponse
@@ -584,12 +584,17 @@ class AssessmentController extends Controller
         ]);
     }
 
-    private function formData(): array
+    // Task 31: $assessment is the record being edited/duplicated, if any. New assessments may only
+    // be filed under an active term, but an existing one must keep offering (and preselecting) the
+    // term it already carries — otherwise deactivating a term makes its assessments unsaveable.
+    private function formData(?Assessment $assessment = null): array
     {
         return [
             'subjects' => Subject::visibleTo(Auth::user())->with('section:id,section_name')->orderBy('subject_code')->get(),
             'sections' => Section::visibleTo(Auth::user())->orderBy('section_name')->get(),
-            'terms' => AcademicTerm::with('year')->where('is_active', true)->get(),
+            'terms' => AcademicTerm::with('year')
+                ->where(fn ($q) => $q->where('is_active', true)->orWhere('id', $assessment?->term))
+                ->get(),
         ];
     }
 }

@@ -33,18 +33,21 @@ class Assessment extends Model
             return $query;
         }
 
-        $query->whereHas('academicTerm', fn ($term) => $term->where('is_active', true));
-
+        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
+        // a term must not turn historical records into 404s. The active-term gate is a
+        // *current-workflow* filter and belongs only on the student's operational lists.
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
-        return $query->whereExists(fn ($q) => $q->selectRaw('1')
-            ->from('tbl_enrolled')
-            ->whereColumn('tbl_enrolled.educator_id', 'tbl_assessments.educator_id')
-            ->whereColumn('tbl_enrolled.subject_id', 'tbl_assessments.subject_id')
-            ->where('tbl_enrolled.student_id', $user->id)
-            ->where('tbl_enrolled.is_active', true));
+        return $query
+            ->whereHas('academicTerm', fn ($term) => $term->where('is_active', true))
+            ->whereExists(fn ($q) => $q->selectRaw('1')
+                ->from('tbl_enrolled')
+                ->whereColumn('tbl_enrolled.educator_id', 'tbl_assessments.educator_id')
+                ->whereColumn('tbl_enrolled.subject_id', 'tbl_assessments.subject_id')
+                ->where('tbl_enrolled.student_id', $user->id)
+                ->where('tbl_enrolled.is_active', true));
     }
 
     // Task 29: archiving is a listing concern only. visibleTo deliberately does NOT apply these —

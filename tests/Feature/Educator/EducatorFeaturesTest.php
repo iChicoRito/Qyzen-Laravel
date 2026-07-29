@@ -315,7 +315,9 @@ class EducatorFeaturesTest extends TestCase
         $this->assertNotNull($older->fresh());
     }
 
-    public function test_inactive_term_blocks_educator_score_detail_route(): void
+    // Task 31: rolling the active term from PRELIM to MIDTERM must not 404/403 the educator out of
+    // PRELIM's existing records.
+    public function test_inactive_term_still_allows_educator_score_detail_route(): void
     {
         $subject = $this->subject($this->eduA);
         $assessment = Assessment::create($this->assessmentModelData($subject));
@@ -330,7 +332,55 @@ class EducatorFeaturesTest extends TestCase
 
         $this->actingAs($this->eduA)
             ->get(route('educator.scores.show', $score))
-            ->assertForbidden();
+            ->assertOk();
+    }
+
+    // Task 31 regression: the reported failure — /educator/scores 404s when previewing a class
+    // whose term was deactivated. Index row, matrix modal and per-student detail must all survive,
+    // while a genuinely nonexistent term id still 404s.
+    public function test_educator_can_still_open_score_matrix_after_term_is_deactivated(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $assessment = Assessment::create($this->assessmentModelData($subject));
+        Enrolled::create([
+            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id,
+            'subject_id' => $subject->id, 'is_active' => true,
+        ]);
+        Score::create([
+            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id,
+            'assessment_id' => $assessment->id, 'subject_id' => $subject->id,
+            'section_id' => $subject->sections_id, 'score' => 3, 'total_questions' => 5,
+            'status' => 'passed', 'is_passed' => true, 'student_answer' => [],
+            'submitted_at' => now(),
+        ]);
+
+        $this->term->update(['is_active' => false]);
+
+        $classParams = [
+            'subject' => $subject->id, 'section' => $subject->sections_id, 'term' => $this->term->id,
+        ];
+
+        // The class row still lists on the index.
+        $this->actingAs($this->eduA)
+            ->get(route('educator.scores.index'))
+            ->assertOk()
+            ->assertSee($subject->subject_code);
+
+        // The preview (matrix) modal resolves and still shows the recorded attempt.
+        $this->actingAs($this->eduA)
+            ->get(route('educator.scores.matrix', $classParams))
+            ->assertOk()
+            ->assertSee('3/5');
+
+        // Per-student detail resolves too.
+        $this->actingAs($this->eduA)
+            ->get(route('educator.scores.student', $classParams + ['student' => $this->student->id]))
+            ->assertOk();
+
+        // A term that genuinely does not exist must still 404.
+        $this->actingAs($this->eduA)
+            ->get(route('educator.scores.matrix', ['subject' => $subject->id, 'section' => $subject->sections_id, 'term' => 999999]))
+            ->assertNotFound();
     }
 
     // Task 13: deleting a bank question must never remove a recorded score, and the historical

@@ -126,7 +126,10 @@ class ScoreController extends Controller
             ->when($selectedSection, fn ($q) => $q->where('sections_id', $selectedSection))
             ->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
-        $filterTerms = AcademicTerm::where('is_active', true)->orderBy('term_name')->get(['id', 'term_name']);
+        // Task 31: every term this educator actually has assessments in — not just the active one,
+        // or historical classes listed above would be unfilterable.
+        $filterTerms = AcademicTerm::whereIn('id', Assessment::visibleTo(Auth::user())->select('term'))
+            ->orderBy('term_name')->get(['id', 'term_name']);
 
         return view('educator.scores.index', compact('classes', 'exportOptions', 'filterSubjects', 'filterSections', 'filterTerms'));
     }
@@ -212,7 +215,10 @@ class ScoreController extends Controller
         $user = Auth::user();
         $subject = Subject::visibleTo($user)->findOrFail($data['subject']);
         $section = Section::visibleTo($user)->findOrFail($data['section']);
-        $term = AcademicTerm::where('is_active', true)->findOrFail($data['term']);
+        // Task 31: resolve the term by identity, not by active status. Deactivating a term must not
+        // turn its existing classes into 404s. A nonexistent id still 404s here, and a term this
+        // educator has no data in simply yields an empty $assessments below.
+        $term = AcademicTerm::findOrFail($data['term']);
 
         $assessments = Assessment::visibleTo($user)
             ->where('subject_id', $subject->id)

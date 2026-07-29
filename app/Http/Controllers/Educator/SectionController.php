@@ -66,7 +66,11 @@ class SectionController extends Controller
 
         return view('educator.sections.edit', [
             'section' => $section,
-            'terms' => AcademicTerm::with('year')->where('is_active', true)->get(),
+            // Task 31: active terms plus the ones this section is already filed under, so a section
+            // in a deactivated term still shows (and can re-save) its own terms.
+            'terms' => AcademicTerm::with('year')
+                ->where(fn ($q) => $q->where('is_active', true)->orWhereIn('id', $section->terms->pluck('id')))
+                ->get(),
         ]);
     }
 

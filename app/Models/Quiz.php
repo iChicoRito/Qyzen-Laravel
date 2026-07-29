@@ -21,19 +21,22 @@ class Quiz extends Model
     // in source (questions are never browsed by admin); admins still excluded here.
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
-        $query->whereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true));
-
+        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
+        // a term must not turn historical records into 404s. The active-term gate is a
+        // *current-workflow* filter and belongs only on the student's operational lists.
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
         if ($user->hasRole('student')) {
-            return $query->whereExists(fn ($q) => $q->selectRaw('1')
-                ->from('tbl_enrolled')
-                ->whereColumn('tbl_enrolled.educator_id', 'tbl_quizzes.educator_id')
-                ->whereColumn('tbl_enrolled.subject_id', 'tbl_quizzes.subject_id')
-                ->where('tbl_enrolled.student_id', $user->id)
-                ->where('tbl_enrolled.is_active', true));
+            return $query
+                ->whereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true))
+                ->whereExists(fn ($q) => $q->selectRaw('1')
+                    ->from('tbl_enrolled')
+                    ->whereColumn('tbl_enrolled.educator_id', 'tbl_quizzes.educator_id')
+                    ->whereColumn('tbl_enrolled.subject_id', 'tbl_quizzes.subject_id')
+                    ->where('tbl_enrolled.student_id', $user->id)
+                    ->where('tbl_enrolled.is_active', true));
         }
 
         return $query->whereRaw('1 = 0'); // admin/other: no quiz visibility

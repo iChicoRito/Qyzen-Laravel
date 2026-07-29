@@ -35,12 +35,11 @@ class Announcement extends Model
 
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
+        // Task 31: educator ownership does NOT depend on the term still being active — deactivating
+        // a term must not turn historical records into 404s. The active-term gate is a
+        // *current-workflow* filter and belongs only on the student's operational lists below.
         if ($user->hasRole('educator')) {
-            return $query->where($this->qualifyColumn('educator_id'), $user->id)
-                ->where(function (Builder $q): void {
-                    $q->whereDoesntHave('subjects')
-                        ->orWhereHas('subjects.section.academicTerm', fn ($term) => $term->where('is_active', true));
-                });
+            return $query->where($this->qualifyColumn('educator_id'), $user->id);
         }
 
         if (! $user->hasRole('student')) {
