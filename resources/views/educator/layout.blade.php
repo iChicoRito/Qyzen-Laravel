@@ -9,7 +9,15 @@
         ['label' => 'Subjects',    'url' => route('educator.subjects.index'),    'active' => request()->routeIs('educator.subjects.*'),                                   'icon' => 'book'],
         ['label' => 'Enrollment',  'url' => route('educator.enrollment.index'),  'active' => request()->routeIs('educator.enrollment.*'),                                 'icon' => 'people'],
         ['heading' => 'Assessment'],
-        ['label' => 'Assessments', 'url' => route('educator.assessments.index'), 'active' => request()->routeIs('educator.assessments.*'),                                'icon' => 'questionnaire-tablet'],
+        [
+            'label' => 'Assessments',
+            'active' => request()->routeIs('educator.assessments.*'),
+            'icon' => 'questionnaire-tablet',
+            'children' => [
+                ['label' => 'Assessments', 'url' => route('educator.assessments.index'), 'active' => request()->routeIs('educator.assessments.index', 'educator.assessments.create', 'educator.assessments.store', 'educator.assessments.edit', 'educator.assessments.update', 'educator.assessments.destroy', 'educator.assessments.duplicate', 'educator.assessments.duplicate.store', 'educator.assessments.pool.*', 'educator.assessments.exemptions*', 'educator.assessments.access*', 'educator.assessments.archive')],
+                ['label' => 'Archived Assessments', 'url' => route('educator.assessments.archived'), 'active' => request()->routeIs('educator.assessments.archived', 'educator.assessments.archived.restore')],
+            ],
+        ],
         [
             'label' => 'Question Bank',
             'active' => request()->routeIs('educator.quizzes.*'),

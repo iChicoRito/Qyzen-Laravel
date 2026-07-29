@@ -47,9 +47,21 @@ class Assessment extends Model
             ->where('tbl_enrolled.is_active', true));
     }
 
+    // Task 29: archiving is a listing concern only. visibleTo deliberately does NOT apply these —
+    // score reads, exports and student score history must still resolve an archived assessment.
+    public function scopeNotArchived(Builder $query): Builder
+    {
+        return $query->where($this->qualifyColumn('is_archived'), false);
+    }
+
+    public function scopeOnlyArchived(Builder $query): Builder
+    {
+        return $query->where($this->qualifyColumn('is_archived'), true);
+    }
+
     protected $fillable = [
         'educator_id', 'subject_id', 'section_id', 'assessment_code', 'time_limit',
-        'cheating_attempts', 'is_shuffle', 'is_active', 'start_date', 'end_date',
+        'cheating_attempts', 'is_shuffle', 'is_active', 'is_archived', 'start_date', 'end_date',
         'start_time', 'end_time', 'term', 'allow_review', 'allow_hint', 'hint_count',
         'allow_retake', 'retake_count', 'pool_size',
     ];
@@ -58,6 +70,7 @@ class Assessment extends Model
         'cheating_attempts' => 'integer',
         'is_shuffle' => 'boolean',
         'is_active' => 'boolean',
+        'is_archived' => 'boolean',
         'start_date' => 'date',
         'end_date' => 'date',
         'allow_review' => 'boolean',

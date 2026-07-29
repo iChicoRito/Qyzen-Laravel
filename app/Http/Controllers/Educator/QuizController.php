@@ -409,7 +409,7 @@ class QuizController extends Controller
 
     private function assessmentFilterOptions(?string $sectionId = null, ?string $subjectId = null)
     {
-        return Assessment::visibleTo(Auth::user())
+        return Assessment::visibleTo(Auth::user())->notArchived()
             ->when($sectionId, fn ($q) => $q->whereHas('subject', fn ($s) => $s->where('sections_id', $sectionId)))
             ->when($subjectId, fn ($q) => $q->where('subject_id', $subjectId))
             ->select('assessment_code')

@@ -20,7 +20,7 @@
         @forelse ($announcements as $announcement)
             <tr>
                 <td><div class="flex flex-col gap-1"><span class="text-mono font-medium text-sm">{{ $announcement->title }}</span><span class="text-xs text-secondary-foreground">{{ Str::limit($announcement->description ?: strip_tags($announcement->body), 90) }}</span></div></td>
-                <td>{{ $announcement->is_global ? 'All enrolled students' : ($announcement->subject?->subject_code.' — '.$announcement->subject?->subject_name) }}</td>
+                <td>{{ $announcement->is_global ? 'All enrolled students' : ($announcement->subjects->pluck('subject_code')->join(', ') ?: '—') }}</td>
                 <td><span class="kt-badge rounded-full kt-badge-outline kt-badge-{{ $announcement->is_active ? 'success' : 'destructive' }}">{{ $announcement->is_active ? 'Active' : 'Inactive' }}</span></td>
                 <td class="text-secondary-foreground">{{ $announcement->created_at?->diffForHumans() }}</td>
                 <td class="text-center"><x-table-actions :edit-modal="route('educator.announcements.edit', $announcement)" edit-modal-title="Edit announcement" :delete="route('educator.announcements.destroy', $announcement)" confirm="Delete this announcement and its images?" /></td>

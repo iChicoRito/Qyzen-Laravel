@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Educator;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreMaterialRequest;
 use App\Http\Requests\UpdateMaterialRequest;
+use App\Models\AcademicTerm;
 use App\Models\Enrolled;
 use App\Models\LearningMaterial;
 use App\Models\Section;
@@ -36,7 +37,14 @@ class MaterialController extends Controller
         $query = LearningMaterial::visibleTo(Auth::user())
             ->with(['subject:id,subject_code,subject_name', 'section:id,section_name']);
         TableQuery::search($query, $request->query('search'), ['file_name', 'file_extension']);
-        TableQuery::filters($query, $request, ['subject' => 'subject_id', 'section' => 'section_id', 'status' => 'is_active']);
+        // Task 29: term filter. Materials have no term column — they inherit it through
+        // subject → section → academic term (the same chain visibleTo() gates on).
+        TableQuery::filters($query, $request, [
+            'subject' => 'subject_id',
+            'section' => 'section_id',
+            'status' => 'is_active',
+            'term' => fn (Builder $q, $value) => $q->whereHas('subject.section', fn ($s) => $s->where('academic_term_id', $value)),
+        ]);
         TableQuery::sort($query, $request, [
             'file' => 'file_name',
             'subject' => function (Builder $q, string $direction): void {
@@ -63,8 +71,9 @@ class MaterialController extends Controller
 
         $filterSubjects = Subject::visibleTo(Auth::user())->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
+        $filterTerms = AcademicTerm::where('is_active', true)->orderBy('term_name')->get(['id', 'term_name']);
 
-        return view('educator.materials.index', compact('groups', 'materials', 'filterSubjects', 'filterSections'));
+        return view('educator.materials.index', compact('groups', 'materials', 'filterSubjects', 'filterSections', 'filterTerms'));
     }
 
     public function create(): View

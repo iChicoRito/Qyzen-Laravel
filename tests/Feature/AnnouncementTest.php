@@ -75,7 +75,7 @@ class AnnouncementTest extends TestCase
             'title' => 'Exam update',
             'description' => 'Read this first.',
             'body' => '<p>Hello <script>alert(1)</script><strong>class</strong></p>',
-            'subject_id' => $this->subject->id,
+            'subject_ids' => [$this->subject->id],
             'is_global' => '0',
             'images' => [UploadedFile::fake()->create('notice.jpg', 10, 'image/jpeg')],
         ]);
@@ -88,7 +88,7 @@ class AnnouncementTest extends TestCase
 
         $this->actingAs($this->educator)->put(route('educator.announcements.update', $announcement), [
             'title' => 'Updated exam', 'description' => '', 'body' => '<p>Updated</p>',
-            'subject_id' => $this->subject->id, 'is_global' => '0',
+            'subject_ids' => [$this->subject->id], 'is_global' => '0',
         ])->assertRedirect(route('educator.announcements.index'));
         $this->assertSame('Updated exam', $announcement->fresh()->title);
 
@@ -118,7 +118,7 @@ class AnnouncementTest extends TestCase
         $this->actingAs($this->educator)->post(route('educator.announcements.store'), [
             'title' => 'Formatted notice',
             'body' => $body,
-            'subject_id' => $this->subject->id,
+            'subject_ids' => [$this->subject->id],
             'is_global' => '0',
         ])->assertRedirect(route('educator.announcements.index'));
 
@@ -141,8 +141,8 @@ class AnnouncementTest extends TestCase
 
     public function test_announcement_targeting_notifications_and_student_cards_are_scoped(): void
     {
-        $subjectAnnouncement = $this->createAnnouncement(['subject_id' => $this->subject->id]);
-        $globalAnnouncement = $this->createAnnouncement(['subject_id' => null, 'is_global' => true, 'title' => 'Global notice']);
+        $subjectAnnouncement = $this->createAnnouncement(['subject_ids' => [$this->subject->id]]);
+        $globalAnnouncement = $this->createAnnouncement(['subject_ids' => [], 'is_global' => true, 'title' => 'Global notice']);
 
         $this->assertDatabaseHas('tbl_notifications', [
             'recipient_user_id' => $this->student->id,
@@ -210,20 +210,21 @@ class AnnouncementTest extends TestCase
     public function test_educator_ownership_and_upload_validation_are_enforced(): void
     {
         $announcement = Announcement::create([
-            'educator_id' => $this->educator->id, 'subject_id' => $this->subject->id,
+            'educator_id' => $this->educator->id,
             'title' => 'Owned', 'body' => '<p>Body</p>', 'is_global' => false, 'is_active' => true,
         ]);
+        $announcement->subjects()->attach($this->subject->id);
 
         $this->actingAs($this->otherEducator)->get(route('educator.announcements.edit', $announcement))->assertForbidden();
         $this->actingAs($this->otherEducator)->delete(route('educator.announcements.destroy', $announcement))->assertForbidden();
 
         $this->actingAs($this->educator)->post(route('educator.announcements.store'), [
-            'title' => 'Bad', 'body' => '<p>Body</p>', 'subject_id' => $this->subject->id,
+            'title' => 'Bad', 'body' => '<p>Body</p>', 'subject_ids' => [$this->subject->id],
             'is_global' => '0', 'images' => [UploadedFile::fake()->create('bad.pdf', 10, 'application/pdf')],
         ])->assertSessionHasErrors('images.0');
 
         $this->actingAs($this->educator)->post(route('educator.announcements.store'), [
-            'title' => 'Too large', 'body' => '<p>Body</p>', 'subject_id' => $this->subject->id,
+            'title' => 'Too large', 'body' => '<p>Body</p>', 'subject_ids' => [$this->subject->id],
             'is_global' => '0', 'images' => [UploadedFile::fake()->create('large.jpg', 10241, 'image/jpeg')],
         ])->assertSessionHasErrors('images.0');
     }
@@ -232,7 +233,7 @@ class AnnouncementTest extends TestCase
     {
         Storage::fake('announcement-images');
         $this->actingAs($this->educator)->post(route('educator.announcements.store'), [
-            'title' => 'Image notice', 'body' => '<p>Body</p>', 'subject_id' => $this->subject->id,
+            'title' => 'Image notice', 'body' => '<p>Body</p>', 'subject_ids' => [$this->subject->id],
             'is_global' => '0', 'images' => [UploadedFile::fake()->create('notice.png', 10, 'image/png')],
         ])->assertRedirect();
         $announcement = Announcement::latest('id')->firstOrFail();
@@ -247,7 +248,6 @@ class AnnouncementTest extends TestCase
         Storage::fake('local')->put('announcements/legacy.jpg', 'legacy-image');
         $announcement = Announcement::create([
             'educator_id' => $this->educator->id,
-            'subject_id' => $this->subject->id,
             'title' => 'Legacy image',
             'body' => '<p>Legacy</p>',
             'is_global' => false,
@@ -258,6 +258,7 @@ class AnnouncementTest extends TestCase
                 'mime' => 'image/jpeg',
             ]],
         ]);
+        $announcement->subjects()->attach($this->subject->id);
 
         $response = $this->actingAs($this->student)
             ->get(route('student.announcements.image', [$announcement, 0]))
@@ -272,7 +273,6 @@ class AnnouncementTest extends TestCase
         Storage::fake('local')->put('announcements/legacy.jpg', 'legacy-image');
         Announcement::create([
             'educator_id' => $this->educator->id,
-            'subject_id' => $this->subject->id,
             'title' => 'Migration',
             'body' => '<p>Migration</p>',
             'is_global' => false,
@@ -291,11 +291,97 @@ class AnnouncementTest extends TestCase
         $this->assertStringContainsString('Copied 0 image(s); 1 already present; 1 missing.', Artisan::output());
     }
 
+    // Task 29: several subjects per announcement, on both create and edit.
+    public function test_announcement_can_target_multiple_subjects_and_is_seen_once(): void
+    {
+        $secondSubject = Subject::create([
+            'educator_id' => $this->educator->id, 'sections_id' => $this->subject->sections_id,
+            'subject_code' => 'S2', 'subject_name' => 'Science', 'is_active' => true,
+        ]);
+        $thirdSubject = Subject::create([
+            'educator_id' => $this->educator->id, 'sections_id' => $this->subject->sections_id,
+            'subject_code' => 'H3', 'subject_name' => 'History', 'is_active' => true,
+        ]);
+        // The student is enrolled in BOTH targets — the feed must not double up.
+        Enrolled::create([
+            'student_id' => $this->student->id, 'educator_id' => $this->educator->id,
+            'subject_id' => $secondSubject->id, 'is_active' => true,
+        ]);
+        // otherStudent is enrolled (actively) in a subject that is NOT targeted.
+        Enrolled::create([
+            'student_id' => $this->otherStudent->id, 'educator_id' => $this->educator->id,
+            'subject_id' => $thirdSubject->id, 'is_active' => true,
+        ]);
+
+        $announcement = $this->createAnnouncement([
+            'title' => 'Two-subject notice',
+            'subject_ids' => [$this->subject->id, $secondSubject->id],
+        ]);
+
+        $this->assertEqualsCanonicalizing(
+            [$this->subject->id, $secondSubject->id],
+            $announcement->subjects->pluck('id')->all()
+        );
+        $this->assertSame(1, Notification::where('recipient_user_id', $this->student->id)
+            ->where('event_type', 'announcement_created')->count());
+
+        $response = $this->actingAs($this->student)->get(route('student.announcements.index'))->assertOk();
+        preg_match_all('/data-announcement-timeline-item="'.$announcement->id.'"/', $response->getContent(), $hits);
+        $this->assertCount(1, $hits[0]);
+
+        $this->actingAs($this->otherStudent)->get(route('student.announcements.index'))
+            ->assertOk()->assertDontSee('Two-subject notice');
+
+        // Edit preselects both, and saving a narrowed set replaces the targets.
+        $this->actingAs($this->educator)->get(route('educator.announcements.edit', $announcement))
+            ->assertOk()
+            ->assertSee('value="'.$this->subject->id.'" selected', false)
+            ->assertSee('value="'.$secondSubject->id.'" selected', false)
+            // The target picker is the KTUI enhanced-tags select, not a bare browser multi-select.
+            ->assertSee('data-kt-select="true"', false)
+            ->assertSee('data-kt-select-multiple="true"', false)
+            ->assertSee('data-kt-select-tags="true"', false)
+            ->assertSee('data-kt-select-enable-search="true"', false);
+
+        $this->actingAs($this->educator)->put(route('educator.announcements.update', $announcement), [
+            'title' => 'Two-subject notice', 'description' => '', 'body' => '<p>Updated</p>',
+            'subject_ids' => [$secondSubject->id], 'is_global' => '0',
+        ])->assertRedirect(route('educator.announcements.index'));
+        $this->assertSame([$secondSubject->id], $announcement->fresh()->subjects->pluck('id')->all());
+    }
+
+    public function test_announcement_requires_at_least_one_target_unless_global(): void
+    {
+        $this->actingAs($this->educator)->post(route('educator.announcements.store'), [
+            'title' => 'No target', 'body' => '<p>Body</p>', 'is_global' => '0',
+        ])->assertSessionHasErrors('subject_ids');
+
+        $this->actingAs($this->educator)->post(route('educator.announcements.store'), [
+            'title' => 'Someone else subject', 'body' => '<p>Body</p>', 'is_global' => '0',
+            'subject_ids' => [$this->foreignSubject()->id],
+        ])->assertSessionHasErrors('subject_ids.0');
+    }
+
+    private function foreignSubject(): Subject
+    {
+        $year = AcademicYear::create(['year' => '2026 - 2027']);
+        $term = AcademicTerm::create(['term_name' => 'Prelim', 'semester' => '1st Semester', 'academic_year_id' => $year->id]);
+        $section = Section::create([
+            'educator_id' => $this->otherEducator->id, 'academic_term_id' => $term->id,
+            'section_name' => 'B1', 'is_active' => true,
+        ]);
+
+        return Subject::create([
+            'educator_id' => $this->otherEducator->id, 'sections_id' => $section->id,
+            'subject_code' => 'X9', 'subject_name' => 'Foreign', 'is_active' => true,
+        ]);
+    }
+
     private function createAnnouncement(array $overrides = []): Announcement
     {
         $this->actingAs($this->educator)->post(route('educator.announcements.store'), array_merge([
             'title' => 'Class announcement', 'body' => '<p>Announcement body</p>',
-            'subject_id' => $this->subject->id, 'is_global' => '0',
+            'subject_ids' => [$this->subject->id], 'is_global' => '0',
         ], $overrides))->assertRedirect();
 
         return Announcement::latest('id')->firstOrFail();

@@ -11,7 +11,7 @@
                     <div class="flex flex-wrap gap-2 items-center mb-0.5">
                         <time class="text-xs text-secondary-foreground">{{ $announcement->created_at?->format('M j, Y') }}</time>
                         <span class="rounded-full size-1.5 bg-input"></span>
-                        <span class="text-xs text-secondary-foreground">{{ $announcement->is_global ? 'All students' : ($announcement->subject?->subject_code ?? 'Subject') }}</span>
+                        <span class="text-xs text-secondary-foreground">{{ $announcement->is_global ? 'All students' : ($announcement->subjects->pluck('subject_code')->join(', ') ?: 'Subject') }}</span>
                         @if ($isNew)<span class="kt-badge kt-badge-sm kt-badge-primary">New</span>@endif
                     </div>
                     <h4 class="text-sm font-semibold text-mono leading-5.5">{{ $announcement->title }}</h4>

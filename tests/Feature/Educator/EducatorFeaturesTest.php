@@ -164,6 +164,76 @@ class EducatorFeaturesTest extends TestCase
         }
     }
 
+    // Task 29: the binding constraint — archiving must never touch a recorded score.
+    public function test_archiving_an_assessment_preserves_every_student_score(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $assessment = Assessment::create($this->assessmentModelData($subject) + ['is_active' => true]);
+        $score = Score::create([
+            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id,
+            'assessment_id' => $assessment->id, 'subject_id' => $subject->id,
+            'section_id' => $subject->sections_id, 'score' => 4, 'total_questions' => 5,
+            'status' => 'passed', 'is_passed' => true, 'student_answer' => [],
+        ]);
+        Enrolled::create([
+            'student_id' => $this->student->id, 'educator_id' => $this->eduA->id,
+            'subject_id' => $subject->id, 'is_active' => true,
+        ]);
+
+        $this->actingAs($this->eduA)
+            ->patch(route('educator.assessments.archive'), ['assessment_ids' => [$assessment->id]])
+            ->assertRedirect(route('educator.assessments.index'));
+
+        $this->assertTrue($assessment->fresh()->is_archived);
+        // The score row, its assessment link, and its readability all survive.
+        $this->assertSame(1, Score::where('assessment_id', $assessment->id)->count());
+        $this->assertNull($score->fresh()->deleted_at);
+        $this->assertNotNull(Score::find($score->id)->assessment);
+        $this->actingAs($this->eduA)->get(route('educator.scores.index'))->assertOk()->assertSee('Q1');
+        $this->actingAs($this->student)->get(route('student.scores.index'))->assertOk()->assertSee('Q1');
+
+        // ...but it is gone from the active lists, for educator and student alike.
+        $this->actingAs($this->eduA)->get(route('educator.assessments.index'))->assertOk()->assertDontSee('Q1');
+        $this->actingAs($this->student)->get(route('student.assessments.index'))->assertOk()->assertDontSee('Q1');
+
+        $this->actingAs($this->eduA)->get(route('educator.assessments.archived'))
+            ->assertOk()->assertSee('Q1')->assertSee('1 score(s) retained');
+
+        $this->actingAs($this->eduA)
+            ->patch(route('educator.assessments.archived.restore'), ['assessment_ids' => [$assessment->id]])
+            ->assertRedirect(route('educator.assessments.archived'));
+        $this->assertFalse($assessment->fresh()->is_archived);
+        $this->actingAs($this->eduA)->get(route('educator.assessments.index'))->assertOk()->assertSee('Q1');
+    }
+
+    public function test_assessment_archive_is_owner_scoped(): void
+    {
+        $foreign = Assessment::create(array_merge(
+            $this->assessmentModelData($this->subject($this->eduB)),
+            ['educator_id' => $this->eduB->id, 'assessment_code' => 'ZZTOP']
+        ));
+
+        $this->actingAs($this->eduA)
+            ->patch(route('educator.assessments.archive'), ['assessment_ids' => [$foreign->id]])
+            ->assertRedirect();
+
+        $this->assertFalse($foreign->fresh()->is_archived);
+    }
+
+    public function test_assessments_sidebar_marks_only_the_current_child_active(): void
+    {
+        foreach ([
+            'educator.assessments.index' => 'Assessments',
+            'educator.assessments.archived' => 'Archived Assessments',
+        ] as $route => $activeChild) {
+            $html = $this->actingAs($this->eduA)->get(route($route))->assertOk()->getContent();
+
+            $this->assertSame(1, substr_count($html, 'class="kt-menu-item active"'));
+            $this->assertSame(1, substr_count($html, 'class="kt-menu-item show"'));
+            $this->assertStringContainsString('>'.$activeChild.'</span>', $html);
+        }
+    }
+
     public function test_educator_can_archive_and_restore_question_batches(): void
     {
         $subject = $this->subject($this->eduA);
@@ -724,12 +794,14 @@ class EducatorFeaturesTest extends TestCase
             'recipient_user_id' => $this->student->id,
             'event_type' => 'assessment_exempted',
             'title' => 'Assessment exemption',
-            'message' => 'You have been exempted from assessment MIDTERM. Reason: Medical absence',
+            'message' => 'You have been exempted from MIDTERM. Reason: Medical absence',
             'assessment_id' => $assessment->id,
         ]);
     }
 
-    public function test_exempting_students_starts_private_chats_with_the_reason(): void
+    // Task 29: the exemption message still lands in the private thread, but tagged as a system
+    // alert so it renders as a KTUI alert rather than an ordinary chat bubble.
+    public function test_exempting_students_starts_private_chats_tagged_as_alerts(): void
     {
         $subject = $this->subject($this->eduA);
         $otherStudent = $this->makeUser('student', 'student');
@@ -754,7 +826,8 @@ class EducatorFeaturesTest extends TestCase
             $this->assertDatabaseHas('tbl_conversation_messages', [
                 'conversation_id' => $conversation->id,
                 'sender_user_id' => $this->eduA->id,
-                'content' => 'You have been exempted from assessment MIDTERM. Reason: Medical absence',
+                'content' => 'You have been exempted from MIDTERM. Reason: Medical absence',
+                'kind' => 'assessment_exempted',
             ]);
         }
         $this->assertDatabaseMissing('tbl_conversations', ['student_id' => $unselectedStudent->id]);
@@ -1007,7 +1080,7 @@ class EducatorFeaturesTest extends TestCase
             ->assertRedirect();
 
         // duration_hours=0 is the no-expiry grant, so the message carries no deadline.
-        $message = 'You have been granted special access to assessment MIDTERM.';
+        $message = 'You have been granted special access to MIDTERM.';
         $this->assertDatabaseHas('tbl_notifications', [
             'recipient_user_id' => $this->student->id,
             'event_type' => 'assessment_access_granted',
@@ -1022,6 +1095,7 @@ class EducatorFeaturesTest extends TestCase
             'conversation_id' => $conversation->id,
             'sender_user_id' => $this->eduA->id,
             'content' => $message,
+            'kind' => 'assessment_access_granted',
         ]);
     }
 

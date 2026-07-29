@@ -24,7 +24,7 @@ class DashboardController extends Controller
         $subjectCount = Subject::visibleTo($user)->count();
         $studentCount = Enrolled::visibleTo($user)->where('is_active', true)
             ->distinct('student_id')->count('student_id');
-        $pendingCount = Assessment::visibleTo($user)->where('is_active', true)
+        $pendingCount = Assessment::visibleTo($user)->notArchived()->where('is_active', true)
             ->whereDate('end_date', '>=', $today)->count();
 
         // --- Area: quiz-activity trend (submitted scores per ISO week) ---
@@ -52,16 +52,16 @@ class DashboardController extends Controller
                 'avg' => isset($avgBySection[$s->id]) ? round((float) $avgBySection[$s->id], 1) : null,
             ]);
 
-        $calendarAssessments = Assessment::visibleTo($user)->with('subject:id,subject_name')
+        $calendarAssessments = Assessment::visibleTo($user)->notArchived()->with('subject:id,subject_name')
             ->whereNotNull('start_date')->whereNotNull('end_date')->get();
         $calendarEvents = $calendarAssessments->map->calendarEvent()->values();
 
-        $nextAssessment = Assessment::visibleTo($user)->with('subject:id,subject_name')
+        $nextAssessment = Assessment::visibleTo($user)->notArchived()->with('subject:id,subject_name')
             ->whereDate('start_date', '>=', $today)->orderBy('start_date')->first();
 
         $heatmapMonth = now()->startOfMonth();
         $heatmapEnd = $heatmapMonth->copy()->endOfMonth();
-        $assessmentCounts = Assessment::visibleTo($user)
+        $assessmentCounts = Assessment::visibleTo($user)->notArchived()
             ->whereBetween('created_at', [$heatmapMonth->copy()->startOfDay(), $heatmapEnd->copy()->endOfDay()])
             ->get(['created_at'])
             ->groupBy(fn (Assessment $assessment) => $assessment->created_at->format('Y-m-d'))

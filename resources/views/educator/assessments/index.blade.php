@@ -2,6 +2,15 @@
 @section('title', 'Assessments')
 @section('heading', 'Assessments')
 @section('toolbar')
+    <form id="assessment_bulk_form" method="POST" action="{{ route('educator.assessments.archive') }}">
+        @csrf
+        @method('PATCH')
+        <button type="submit" class="kt-btn kt-btn-sm kt-btn-outline" data-assessment-bulk disabled
+                data-confirm="Archive the selected assessment(s)? Student scores are kept and stay visible on the Scores pages."
+                data-confirm-title="Archive assessments">
+            Archive selected <span data-assessment-bulk-count>0</span>
+        </button>
+    </form>
     <button type="button" class="kt-btn kt-btn-sm kt-btn-primary"
             data-modal-url="{{ route('educator.assessments.create') }}" data-modal-target="#form_modal" data-modal-title="Add assessment">Add assessment</button>
 @endsection
@@ -30,6 +39,7 @@
         <x-slot:head>
             <thead>
                 <tr>
+                    <th class="w-[40px]"><input type="checkbox" class="kt-checkbox kt-checkbox-sm" data-assessment-select-all aria-label="Select all assessments on this page"></th>
                     <th class="min-w-[120px]" data-sort="code"><span class="kt-table-col"><span class="kt-table-col-label">Code</span><span class="kt-table-col-sort"></span></span></th>
                     <th class="min-w-[120px]" data-sort="subject"><span class="kt-table-col"><span class="kt-table-col-label">Subject</span><span class="kt-table-col-sort"></span></span></th>
                     <th class="min-w-[140px]" data-sort="section"><span class="kt-table-col"><span class="kt-table-col-label">Section</span><span class="kt-table-col-sort"></span></span></th>
@@ -42,6 +52,7 @@
         </x-slot:head>
         @forelse ($assessments as $a)
             <tr>
+                <td><input type="checkbox" class="kt-checkbox kt-checkbox-sm" name="assessment_ids[]" value="{{ $a->id }}" form="assessment_bulk_form" data-assessment-select aria-label="Select assessment {{ $a->assessment_code }}"></td>
                 <td class="text-mono font-medium text-sm"><span data-filter-value="assessment" data-filter-key="{{ $a->assessment_code }}" hidden></span>{{ $a->assessment_code }}</td>
                 <td><span data-filter-value="subject" data-filter-key="{{ $a->subject_id }}" hidden></span>{{ optional($a->subject)->subject_name }}</td>
                 <td><span data-filter-value="section" data-filter-key="{{ $a->section_id }}" hidden></span>{{ optional($a->section)->section_name }}</td>
@@ -87,9 +98,46 @@
                 </td>
             </tr>
         @empty
-            <tr><td colspan="7" class="text-center text-secondary-foreground py-5">No assessments.</td></tr>
+            <tr><td colspan="8" class="text-center text-secondary-foreground py-5">No assessments.</td></tr>
         @endforelse
     </x-data-table>
 
     <x-modal id="form_modal" width="900px" />
 @endsection
+
+@push('scripts')
+<script nonce="{{ $cspNonce ?? '' }}" data-ajax-rerun>
+(function () {
+    if (window.qyzenAssessmentArchiveBound) return;
+    window.qyzenAssessmentArchiveBound = true;
+
+    function syncAssessmentBulkState() {
+        var selected = document.querySelectorAll('[data-assessment-select]:checked').length;
+        var button = document.querySelector('[data-assessment-bulk]');
+        var count = document.querySelector('[data-assessment-bulk-count]');
+        if (!button || !count) return;
+        button.disabled = selected === 0;
+        count.textContent = selected;
+    }
+
+    document.addEventListener('change', function (event) {
+        if (event.target.matches('[data-assessment-select], [data-assessment-select-all]')) {
+            if (event.target.matches('[data-assessment-select-all]')) {
+                document.querySelectorAll('[data-assessment-select]').forEach(function (box) {
+                    box.checked = event.target.checked;
+                });
+            }
+            syncAssessmentBulkState();
+        }
+    }, true);
+
+    document.addEventListener('submit', function (event) {
+        var form = event.target.closest('#assessment_bulk_form');
+        if (!form) return;
+        if (!document.querySelector('[data-assessment-select]:checked')) event.preventDefault();
+    });
+
+    syncAssessmentBulkState();
+})();
+</script>
+@endpush

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\Storage;
 
 class Announcement extends Model
@@ -14,7 +15,7 @@ class Announcement extends Model
     protected $table = 'tbl_announcements';
 
     protected $fillable = [
-        'educator_id', 'subject_id', 'is_global', 'title', 'description', 'body', 'images', 'is_active',
+        'educator_id', 'is_global', 'title', 'description', 'body', 'images', 'is_active',
     ];
 
     protected $casts = [
@@ -37,8 +38,8 @@ class Announcement extends Model
         if ($user->hasRole('educator')) {
             return $query->where($this->qualifyColumn('educator_id'), $user->id)
                 ->where(function (Builder $q): void {
-                    $q->whereNull('subject_id')
-                        ->orWhereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true));
+                    $q->whereDoesntHave('subjects')
+                        ->orWhereHas('subjects.section.academicTerm', fn ($term) => $term->where('is_active', true));
                 });
         }
 
@@ -59,12 +60,15 @@ class Announcement extends Model
                         ->where('tbl_enrolled.is_active', true)
                         ->where('tbl_academic_term.is_active', true));
             })->orWhere(function (Builder $subject) use ($user): void {
+                // Task 29: enrolled in ANY of the announcement's target subjects. EXISTS (not a
+                // join) so a student enrolled in two targeted subjects still sees it once.
                 $subject->where('is_global', false)
-                    ->whereHas('subject.section.academicTerm', fn ($term) => $term->where('is_active', true))
+                    ->whereHas('subjects.section.academicTerm', fn ($term) => $term->where('is_active', true))
                     ->whereExists(fn ($enrolled) => $enrolled->selectRaw('1')
                         ->from('tbl_enrolled')
+                        ->join('tbl_announcement_subject', 'tbl_announcement_subject.subject_id', '=', 'tbl_enrolled.subject_id')
+                        ->whereColumn('tbl_announcement_subject.announcement_id', 'tbl_announcements.id')
                         ->whereColumn('tbl_enrolled.educator_id', 'tbl_announcements.educator_id')
-                        ->whereColumn('tbl_enrolled.subject_id', 'tbl_announcements.subject_id')
                         ->where('tbl_enrolled.student_id', $user->id)
                         ->where('tbl_enrolled.is_active', true));
             });
@@ -76,8 +80,9 @@ class Announcement extends Model
         return $this->belongsTo(User::class, 'educator_id');
     }
 
-    public function subject(): BelongsTo
+    // Task 29: an announcement targets zero (global) or many subjects.
+    public function subjects(): BelongsToMany
     {
-        return $this->belongsTo(Subject::class, 'subject_id');
+        return $this->belongsToMany(Subject::class, 'tbl_announcement_subject', 'announcement_id', 'subject_id');
     }
 }

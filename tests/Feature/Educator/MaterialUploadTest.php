@@ -144,10 +144,39 @@ class MaterialUploadTest extends TestCase
         $this->assertSame(0, LearningMaterial::count());
     }
 
-    private function subject(): Subject
+    // Task 29: materials carry no term column — the filter walks subject → section → term.
+    public function test_materials_index_filters_by_academic_term(): void
+    {
+        $otherTerm = AcademicTerm::create([
+            'term_name' => 'Midterm', 'semester' => '1st Semester',
+            'academic_year_id' => $this->term->academic_year_id,
+        ]);
+        $prelimSubject = $this->subject();
+        $midtermSubject = $this->subject($otherTerm);
+
+        foreach ([[$prelimSubject, 'prelim-notes.pdf'], [$midtermSubject, 'midterm-notes.pdf']] as [$subject, $name]) {
+            $this->actingAs($this->edu)->post(route('educator.materials.store'), [
+                'subject_ids' => [$subject->id],
+                'files' => [UploadedFile::fake()->create($name, 100, 'application/pdf')],
+            ])->assertRedirect(route('educator.materials.index'));
+        }
+
+        $this->actingAs($this->edu)->get(route('educator.materials.index'))
+            ->assertOk()
+            ->assertSee('data-filter="term"', false)
+            ->assertSee('prelim-notes.pdf')
+            ->assertSee('midterm-notes.pdf');
+
+        $this->actingAs($this->edu)->get(route('educator.materials.index', ['term' => $this->term->id]))
+            ->assertOk()
+            ->assertSee('prelim-notes.pdf')
+            ->assertDontSee('midterm-notes.pdf');
+    }
+
+    private function subject(?AcademicTerm $term = null): Subject
     {
         $section = Section::create([
-            'educator_id' => $this->edu->id, 'academic_term_id' => $this->term->id,
+            'educator_id' => $this->edu->id, 'academic_term_id' => ($term ?? $this->term)->id,
             'section_name' => 'Section'.uniqid(), 'is_active' => true,
         ]);
 

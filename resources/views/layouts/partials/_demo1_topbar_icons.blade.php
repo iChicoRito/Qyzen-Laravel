@@ -1240,6 +1240,3 @@
        </div>
        <!--End of Chat Drawer-->
        <!-- End of Chat -->
-       @if (auth()->user()?->hasRole('educator'))
-       @include('layouts.partials._assistant_drawer')
-       @endif

@@ -88,7 +88,12 @@
             if (!global) return;
             var form = global.closest('[data-announcement-form]');
             var subject = form && form.querySelector('[data-subject-select]');
-            if (subject) subject.disabled = global.checked;
+            if (!subject) return;
+            subject.disabled = global.checked;
+            {{-- KTSelect hides the native <select>, so toggling its disabled property alone leaves
+                 the visible wrapper fully clickable — drive the instance instead when it exists. --}}
+            var ktSelect = window.KTSelect && KTSelect.getInstance ? KTSelect.getInstance(subject) : null;
+            if (ktSelect) { global.checked ? ktSelect.disable() : ktSelect.enable(); }
         });
 
         {{-- Switch with data-reveal="#id" → show/hide the target field when toggled on/off. --}}

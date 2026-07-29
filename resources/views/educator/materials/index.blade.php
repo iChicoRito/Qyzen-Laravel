@@ -39,6 +39,12 @@
                     <option value="{{ $sec->id }}">{{ $sec->section_name }}</option>
                 @endforeach
             </select>
+            <select data-filter="term" class="kt-select w-32">
+                <option value="">All terms</option>
+                @foreach ($filterTerms as $term)
+                    <option value="{{ $term->id }}">{{ $term->term_name }}</option>
+                @endforeach
+            </select>
             <select data-filter="status" class="kt-select w-36">
                 <option value="">All statuses</option>
                 <option value="active">Active</option>

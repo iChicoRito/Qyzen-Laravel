@@ -25,6 +25,7 @@ class MonitoringController extends Controller
         $onlineThreshold = now()->subSeconds(60); // 60s-stale = offline (matches source heuristic)
 
         $query = Assessment::visibleTo($user)
+            ->notArchived()
             ->where('tbl_assessments.is_active', true)
             ->select('tbl_assessments.*')
             ->leftJoin('tbl_subjects as sort_subjects', 'sort_subjects.id', '=', 'tbl_assessments.subject_id')

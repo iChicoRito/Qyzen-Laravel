@@ -20,7 +20,9 @@ class ConversationMessagePolicy
 
     private function ownsAndEditable(User $user, ConversationMessage $message): bool
     {
-        if ($message->sender_user_id !== $user->id || $message->isDeleted()) {
+        // Task 29: a system alert (exemption / special access) is a record of an action, not
+        // conversation — its author cannot rewrite or retract it.
+        if ($message->sender_user_id !== $user->id || $message->isDeleted() || $message->isAlert()) {
             return false;
         }
 

@@ -29,7 +29,7 @@ class DashboardController extends Controller
         $passRate = $submittedCount ? round($passCount / $submittedCount * 100) : 0;
 
         // --- Visible assessments (enrolled subjects) + availability badges ---
-        $assessments = Assessment::visibleTo($user)->with('subject:id,subject_name')->get();
+        $assessments = Assessment::visibleTo($user)->notArchived()->with('subject:id,subject_name')->get();
         $badges = $assessments->mapWithKeys(fn ($a) => [
             $a->id => $availability->summarize($a, $user->id)['badge'],
         ]);

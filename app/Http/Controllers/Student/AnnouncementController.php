@@ -16,7 +16,7 @@ class AnnouncementController extends Controller
     {
         $this->authorize('viewAny', Announcement::class);
         $announcements = Announcement::visibleTo(Auth::user())
-            ->with(['educator:id,given_name,surname,profile_picture', 'subject:id,subject_code,subject_name'])
+            ->with(['educator:id,given_name,surname,profile_picture', 'subjects:id,subject_code,subject_name'])
             ->latest()->paginate(10);
         $newAnnouncementIds = Notification::forRecipient(Auth::id())
             ->where('event_type', 'announcement_created')

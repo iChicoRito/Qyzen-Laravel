@@ -64,7 +64,7 @@ class DashboardController extends Controller
             ->latest('submitted_at')->take(5)->get();
 
         // --- Right panel ---
-        $calendarEvents = Assessment::with('subject:id,subject_name')
+        $calendarEvents = Assessment::notArchived()->with('subject:id,subject_name')
             ->whereNotNull('start_date')->whereNotNull('end_date')
             ->get()->map->calendarEvent()->values();
         $activeToday = StudentPresence::whereDate('last_seen_at', $today)->count();

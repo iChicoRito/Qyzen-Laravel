@@ -66,11 +66,14 @@ class ConversationService
             ->get(['id', 'subject_code', 'subject_name', 'sections_id']);
     }
 
-    public function sendMessage(Conversation $conversation, User $sender, string $content): ConversationMessage
+    // $kind tags a system-generated message (see ConversationMessage::ALERT_KINDS) so the thread
+    // renders it as an alert rather than a chat bubble. NULL is an ordinary typed message.
+    public function sendMessage(Conversation $conversation, User $sender, string $content, ?string $kind = null): ConversationMessage
     {
         return $conversation->messages()->create([
             'sender_user_id' => $sender->id,
             'content' => $content,
+            'kind' => $kind,
         ]);
     }
 

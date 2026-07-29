@@ -73,18 +73,6 @@ return [
             'replace_placeholders' => true,
         ],
 
-        // Task 28: educator-assistant audit trail. Deliberately NOT in the stack — it is a
-        // per-request record of which educator called which retrieval tool over how many rows,
-        // and must not be diluted into laravel.log. Never receives raw prompts, student names,
-        // or the API key (see App\Services\Ai\AiAudit).
-        'ai' => [
-            'driver' => 'daily',
-            'path' => storage_path('logs/ai.log'),
-            'level' => 'info',
-            'days' => env('AI_LOG_DAYS', 30),
-            'replace_placeholders' => true,
-        ],
-
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),

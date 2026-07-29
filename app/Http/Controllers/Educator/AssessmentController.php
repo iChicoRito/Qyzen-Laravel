@@ -49,7 +49,7 @@ class AssessmentController extends Controller
 
         $selectedSubject = $request->query('subject');
         $selectedSection = $request->query('section');
-        $query = Assessment::visibleTo(Auth::user())
+        $query = Assessment::visibleTo(Auth::user())->notArchived()
             ->with(['subject:id,subject_code,subject_name', 'section:id,section_name', 'academicTerm:id,term_name']);
         TableQuery::search($query, $request->query('search'), [
             'assessment_code',
@@ -92,7 +92,7 @@ class AssessmentController extends Controller
             ->when($selectedSection, fn ($q) => $q->where('sections_id', $selectedSection))
             ->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name', 'sections_id']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
-        $filterAssessments = Assessment::visibleTo(Auth::user())
+        $filterAssessments = Assessment::visibleTo(Auth::user())->notArchived()
             ->when($selectedSection, fn ($q) => $q->whereHas('subject', fn ($s) => $s->where('sections_id', $selectedSection)))
             ->when($selectedSubject, fn ($q) => $q->where('subject_id', $selectedSubject))
             ->select('assessment_code')
@@ -237,6 +237,70 @@ class AssessmentController extends Controller
         return redirect()->route('educator.assessments.index')->with('status', 'Assessment deleted.');
     }
 
+    // Task 29: batch archive. Only flips is_archived — scores, submissions, retakes, exemptions
+    // and the question pool are all left alone, so an archived assessment still resolves from
+    // the score matrix, the exports and the student's own score history.
+    public function archive(Request $request): RedirectResponse
+    {
+        $count = $this->setArchived($request, true);
+
+        return redirect()->route('educator.assessments.index')
+            ->with('status', $count.' assessment(s) archived. Student scores were not affected.');
+    }
+
+    public function restoreArchived(Request $request): RedirectResponse
+    {
+        $count = $this->setArchived($request, false);
+
+        return redirect()->route('educator.assessments.archived')
+            ->with('status', $count.' assessment(s) restored.');
+    }
+
+    public function archived(Request $request): View
+    {
+        $this->authorize('viewAny', Assessment::class);
+
+        $query = Assessment::visibleTo(Auth::user())->onlyArchived()
+            ->with(['subject:id,subject_code,subject_name', 'section:id,section_name', 'academicTerm:id,term_name'])
+            ->withCount('scores');
+        TableQuery::search($query, $request->query('search'), [
+            'assessment_code',
+            fn (Builder $q, string $term) => $q->orWhereHas('subject', fn ($s) => $s->where('subject_code', 'like', "%{$term}%")->orWhere('subject_name', 'like', "%{$term}%")),
+            fn (Builder $q, string $term) => $q->orWhereHas('section', fn ($s) => $s->where('section_name', 'like', "%{$term}%")),
+        ]);
+        TableQuery::sort($query, $request, [
+            'code' => 'assessment_code',
+            'scores' => 'scores_count',
+            'id' => 'id',
+        ], 'id', 'desc');
+
+        return view('educator.assessments.archived', [
+            'assessments' => $query->paginate(TableQuery::perPage($request))->withQueryString(),
+        ]);
+    }
+
+    private function setArchived(Request $request, bool $archived): int
+    {
+        $data = $request->validate([
+            'assessment_ids' => ['required', 'array', 'min:1'],
+            'assessment_ids.*' => ['integer'],
+        ]);
+
+        $assessments = Assessment::visibleTo(Auth::user())
+            ->whereKey($data['assessment_ids'])
+            ->where('is_archived', ! $archived)
+            ->get();
+
+        return DB::transaction(function () use ($assessments, $archived): int {
+            foreach ($assessments as $assessment) {
+                $this->authorize('update', $assessment);
+                $assessment->update(['is_archived' => $archived]);
+            }
+
+            return $assessments->count();
+        });
+    }
+
     // Task 01: per-student "cannot take this quiz" exemption (e.g. an absent student).
     public function exemptions(Assessment $assessment): View
     {
@@ -323,7 +387,11 @@ class AssessmentController extends Controller
         }
 
         if ($action === 'exempt' && $newlyExemptedIds->isNotEmpty()) {
-            $exemptionMessage = 'You have been exempted from assessment '.$assessment->assessment_code.'. Reason: '.$data['reason'];
+            // Task 30: one statement, one "Reason:" label, one reason — and the label is dropped
+            // entirely when no reason was given, rather than trailing an empty "Reason: ".
+            $reason = trim((string) ($data['reason'] ?? ''));
+            $exemptionMessage = 'You have been exempted from '.$assessment->assessment_code.'.'
+                .($reason !== '' ? ' Reason: '.$reason : '');
 
             $this->notifications->emitToMany(Auth::user(), 'assessment_exempted', $newlyExemptedIds->all(), [
                 'subject_id' => $assessment->subject_id,
@@ -332,15 +400,17 @@ class AssessmentController extends Controller
                 'title' => 'Assessment exemption',
                 'message' => $exemptionMessage,
                 'link_path' => route('student.assessments.index'),
-                'metadata' => ['reason' => $data['reason']],
+                'metadata' => ['reason' => $reason !== '' ? $reason : null],
             ]);
 
+            // Also dropped into the private thread, tagged so it renders as a KTUI alert rather
+            // than an ordinary chat bubble.
             foreach ($newlyExemptedIds as $studentId) {
                 $conversation = $this->conversations->findOrCreateConversation(
                     Auth::user(),
                     User::findOrFail($studentId),
                 );
-                $this->conversations->sendMessage($conversation, Auth::user(), $exemptionMessage);
+                $this->conversations->sendMessage($conversation, Auth::user(), $exemptionMessage, 'assessment_exempted');
                 broadcast(new ConversationActivity((int) $studentId, $conversation->id));
             }
         }
@@ -451,7 +521,7 @@ class AssessmentController extends Controller
             : $studentIds;
 
         if ($action === 'grant' && $activeStudentIds->isNotEmpty()) {
-            $accessMessage = 'You have been granted special access to assessment '.$assessment->assessment_code.'.'
+            $accessMessage = 'You have been granted special access to '.$assessment->assessment_code.'.'
                 .($expiresAt ? ' This access expires on '.$expiresAt->format('M j, Y g:i A').'.' : '');
 
             $this->notifications->emitToMany(Auth::user(), 'assessment_access_granted', $activeStudentIds->all(), [
@@ -468,7 +538,7 @@ class AssessmentController extends Controller
                     Auth::user(),
                     User::findOrFail($studentId),
                 );
-                $this->conversations->sendMessage($conversation, Auth::user(), $accessMessage);
+                $this->conversations->sendMessage($conversation, Auth::user(), $accessMessage, 'assessment_access_granted');
                 broadcast(new ConversationActivity((int) $studentId, $conversation->id));
             }
         }

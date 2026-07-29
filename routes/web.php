@@ -14,7 +14,6 @@ use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\Educator\AnnouncementController as EducatorAnnouncementController;
 use App\Http\Controllers\Educator\AssessmentController;
 use App\Http\Controllers\Educator\AssessmentQuestionPoolController;
-use App\Http\Controllers\Educator\AssistantController;
 use App\Http\Controllers\Educator\ChatController;
 use App\Http\Controllers\Educator\DashboardController as EducatorDashboardController;
 use App\Http\Controllers\Educator\EnrollmentController;
@@ -192,7 +191,13 @@ Route::middleware(['auth', 'verified', 'role:educator'])
 
         Route::get('assessments/{assessment}/duplicate', [AssessmentController::class, 'duplicate'])->name('assessments.duplicate');
         Route::post('assessments/{assessment}/duplicate', [AssessmentController::class, 'storeDuplicate'])->name('assessments.duplicate.store');
-        Route::resource('assessments', AssessmentController::class)->except('show');
+        // Task 29: archiving (scores are preserved — this only flips is_archived). Declared before
+        // the resource, and the resource's {assessment} is uuid-constrained, so "archive"/"archived"
+        // are not swallowed by the wildcard.
+        Route::patch('assessments/archive', [AssessmentController::class, 'archive'])->name('assessments.archive');
+        Route::get('assessments/archived', [AssessmentController::class, 'archived'])->name('assessments.archived');
+        Route::patch('assessments/archived/restore', [AssessmentController::class, 'restoreArchived'])->name('assessments.archived.restore');
+        Route::resource('assessments', AssessmentController::class)->except('show')->whereUuid('assessment');
 
         // Task 51: question pool config — which bank questions are eligible + draw size N.
         Route::get('assessments/{assessment}/pool', [AssessmentQuestionPoolController::class, 'edit'])->name('assessments.pool.edit');
@@ -249,10 +254,4 @@ Route::middleware(['auth', 'verified', 'role:educator'])
 
         // G11 monitoring (request/response).
         Route::get('monitoring', [MonitoringController::class, 'index'])->name('monitoring.index');
-
-        // Task 28: AI academic assistant. Educator-only by virtue of this group; the Groq key
-        // stays server-side and every retrieval runs through a visibleTo scope.
-        Route::post('assistant/message', [AssistantController::class, 'message'])
-            ->middleware('throttle:assistant')->name('assistant.message');
-        Route::delete('assistant/history', [AssistantController::class, 'reset'])->name('assistant.reset');
     });

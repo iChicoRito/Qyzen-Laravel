@@ -14,7 +14,7 @@ class CalendarController extends Controller
     {
         $user = auth()->user();
 
-        $events = Assessment::visibleTo($user)
+        $events = Assessment::visibleTo($user)->notArchived()
             ->with('subject:id,subject_name', 'section:id,section_name')
             ->whereNotNull('start_date')->whereNotNull('end_date')
             ->get()->map->calendarEvent()->values();

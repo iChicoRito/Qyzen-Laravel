@@ -9,7 +9,30 @@
      $message = $row->message;
      $mine = $message->sender_user_id === $myId;
      $deleted = $message->isDeleted();
+     $isAlert = $message->isAlert();
  @endphp
+ @if ($isAlert)
+ {{-- Task 29: system-generated messages (exemption / special access) render as a KTUI alert
+      spanning the thread — they are announcements, not conversation, so no avatar, no bubble
+      tail, no edit/delete. --}}
+ @php [$variant, $icon, $heading] = $message->alertStyle(); @endphp
+ <div class="px-5" data-message-id="{{ $message->id }}" data-message-alert="{{ $message->kind }}">
+  <div class="kt-alert kt-alert-light kt-alert-{{ $variant }} kt-alert-outline items-start">
+   {{-- text-lg: the kt-alert icon sizing rule targets svg, so an <i> keenicon needs its own size. --}}
+   <div class="kt-alert-icon"><i class="ki-filled ki-{{ $icon }} text-lg"></i></div>
+   <div class="kt-alert-content">
+    <div class="kt-alert-title">{{ $heading }}</div>
+    <div class="kt-alert-description">{{ $message->displayContent() }}</div>
+   </div>
+  </div>
+  <div class="flex items-center gap-2 mt-1.5 {{ $mine ? 'justify-end' : '' }}">
+   <span class="text-xs font-medium text-muted-foreground">{{ $message->created_at->format('H:i') }}</span>
+   @if ($mine)
+   <i class="ki-filled ki-double-check text-lg {{ $row->isRead ? 'text-green-500' : 'text-muted-foreground' }}"></i>
+   @endif
+  </div>
+ </div>
+ @else
  <div class="flex items-end {{ $mine ? 'justify-end' : '' }} gap-3.5 px-5" data-message-id="{{ $message->id }}">
   @unless ($mine)
   <div class="kt-avatar size-9">
@@ -45,6 +68,7 @@
    </div>
   </div>
  </div>
+ @endif
  @empty
  <div class="flex flex-col items-center justify-center text-center gap-2 py-10 px-5">
   <span class="text-sm font-medium text-secondary-foreground">No messages yet — say hello!</span>

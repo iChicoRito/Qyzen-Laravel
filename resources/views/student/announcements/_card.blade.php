@@ -22,6 +22,6 @@
                 @foreach ($images as $image)<img class="bg-cover bg-center rounded-xl w-full min-h-48 object-cover" src="{{ route('student.announcements.image', [$announcement, $loop->index]) }}" alt="{{ $image['name'] ?? 'Announcement image' }}">@endforeach
             </div>
         @endif
-        @if ($announcement->subject)<span class="kt-badge kt-badge-outline w-fit">{{ $announcement->subject->subject_code }} — {{ $announcement->subject->subject_name }}</span>@else<span class="kt-badge kt-badge-outline w-fit">All enrolled students</span>@endif
+        @forelse ($announcement->subjects as $subject)<span class="kt-badge kt-badge-outline w-fit">{{ $subject->subject_code }} — {{ $subject->subject_name }}</span>@empty<span class="kt-badge kt-badge-outline w-fit">All enrolled students</span>@endforelse
     </div>
 </article>

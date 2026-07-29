@@ -11,7 +11,26 @@
             <input type="hidden" name="body" data-quill-value value="{{ \App\Support\AnnouncementHtml::sanitize(old('body', $announcement?->body)) }}">
             @error('body')<span class="text-xs text-destructive">{{ $message }}</span>@enderror
         </div>
-        <div class="flex flex-col gap-1.5"><label class="kt-form-label">Target</label><select class="kt-select" name="subject_id" data-subject-select><option value="">Select subject</option>@foreach ($subjects as $subject)<option value="{{ $subject->id }}" @selected((string) old('subject_id', $announcement?->subject_id) === (string) $subject->id)>{{ $subject->subject_code }} — {{ $subject->subject_name }} ({{ $subject->section?->section_name ?? '—' }})</option>@endforeach</select>@error('subject_id')<span class="text-xs text-destructive">{{ $message }}</span>@enderror</div>
+        @php $selectedSubjectIds = array_map('strval', old('subject_ids', $announcement?->subjects->pluck('id')->all() ?? [])); @endphp
+        <div class="flex flex-col gap-1.5">
+            <label class="kt-form-label">Target <span class="text-secondary-foreground">(Select one or more)</span></label>
+            {{-- KTSelect enhanced tags: each chosen subject becomes a removable tag. data-kt-select-*
+                 attributes only; KTSelect.init() runs on DOM ready and again in the modal loader's
+                 reinit(), since this fragment is injected after DOM ready. --}}
+            <select class="kt-select" name="subject_ids[]" multiple data-subject-select
+                    data-kt-select="true"
+                    data-kt-select-multiple="true"
+                    data-kt-select-tags="true"
+                    data-kt-select-enable-search="true"
+                    data-kt-select-placeholder="Select subjects…"
+                    data-kt-select-search-placeholder="Search subjects…">
+                @foreach ($subjects as $subject)
+                    <option value="{{ $subject->id }}" @selected(in_array((string) $subject->id, $selectedSubjectIds, true))>{{ $subject->subject_code }} — {{ $subject->subject_name }} ({{ $subject->section?->section_name ?? '—' }})</option>
+                @endforeach
+            </select>
+            @error('subject_ids')<span class="text-xs text-destructive">{{ $message }}</span>@enderror
+            @error('subject_ids.*')<span class="text-xs text-destructive">{{ $message }}</span>@enderror
+        </div>
         <input type="hidden" name="is_global" value="0"><x-checkbox-card variant="switch" name="is_global" value="1" title="Global announcement" desc="Show this announcement to every active student enrolled with you." :checked="(bool) old('is_global', $announcement?->is_global)" data-global-switch />
         <div class="flex flex-col gap-1.5"><label class="kt-form-label">Images <span class="text-secondary-foreground">(Optional, 10 MB maximum per file)</span></label><input class="kt-input" type="file" name="images[]" accept="image/jpeg,image/png,image/webp,image/gif" multiple><span class="text-xs text-secondary-foreground">New images replace existing images when editing.</span>@error('images.*')<span class="text-xs text-destructive">{{ $message }}</span>@enderror</div>
         @if (($announcement?->images ?? []) !== [])<div class="flex flex-wrap gap-2">@foreach ($announcement->images as $image)<img class="size-20 object-cover rounded-lg" src="{{ route('student.announcements.image', [$announcement, $loop->index]) }}" alt="{{ $image['name'] ?? 'Announcement image' }}">@endforeach</div>@endif

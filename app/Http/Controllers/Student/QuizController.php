@@ -39,6 +39,12 @@ class QuizController extends Controller
     // re-checks through.
     private function authorizeQuizAccess(Assessment $assessment): void
     {
+        // Task 29: an archived assessment is off the list, so it must also be unreachable by
+        // direct URL. Score history is untouched — that reads through Score, not through here.
+        if ($assessment->is_archived) {
+            throw new AuthorizationException('This assessment has been archived.');
+        }
+
         try {
             $this->authorize('view', $assessment);
         } catch (AuthorizationException $e) {
@@ -57,7 +63,7 @@ class QuizController extends Controller
     {
         $user = Auth::user();
 
-        $query = Assessment::visibleTo($user)
+        $query = Assessment::visibleTo($user)->notArchived()
             ->with(['subject:id,subject_code,subject_name', 'section:id,section_name', 'academicTerm:id,term_name']);
         TableQuery::search($query, $request->query('search'), [
             'assessment_code',
@@ -96,7 +102,7 @@ class QuizController extends Controller
 
         $subjects = Subject::visibleTo($user)->orderBy('subject_name')->get(['id', 'subject_code', 'subject_name']);
         $sections = Section::visibleTo($user)->orderBy('section_name')->get(['id', 'section_name']);
-        $terms = AcademicTerm::whereIn('id', Assessment::visibleTo($user)->select('term'))->orderBy('term_name')->get(['id', 'term_name']);
+        $terms = AcademicTerm::whereIn('id', Assessment::visibleTo($user)->notArchived()->select('term'))->orderBy('term_name')->get(['id', 'term_name']);
         $tab = $request->query('tab', 'pending'); // pending | finished
 
         return view('student.assessments.index', compact('assessments', 'subjects', 'sections', 'terms', 'tab'));
