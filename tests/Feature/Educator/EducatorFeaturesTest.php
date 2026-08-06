@@ -20,6 +20,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Testing\File;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as SpreadsheetWriter;
@@ -1034,7 +1035,7 @@ class EducatorFeaturesTest extends TestCase
         $this->actingAs($this->eduA)
             ->get(route('educator.assessments.access', ['assessment' => $assessment, 'modal' => 1]))
             ->assertOk()
-            ->assertSee('Manage special access')
+            ->assertSee('Special Access') // Task 32: shortened from "Manage special access"
             ->assertSee('action="'.route('educator.assessments.access.toggle', $assessment, false).'"', false)
             ->assertSee('data-assessment-modal-form', false)
             ->assertSee('data-no-spinner', false)
@@ -1878,6 +1879,69 @@ class EducatorFeaturesTest extends TestCase
 
     // ---- G6 quizzes: correct_answer never serialized ----
 
+    // Task 32: tbl_assessments has unique(assessment_code, subject_id, section_id, term). Reusing a
+    // name used to throw a duplicate-key QueryException that rendered as an HTML error page, which
+    // the submit JS could only report as "The server returned an unexpected response".
+    public function test_creating_an_assessment_with_a_taken_name_fails_validation_not_the_database(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::findOrFail($subject->sections_id);
+        Assessment::create($this->assessmentModelData($subject)); // already uses code "Q1"
+
+        $this->actingAs($this->eduA)
+            ->post(route('educator.assessments.store'), $this->assessmentPayload($subject, $section, true))
+            ->assertSessionHasErrors('assessment_code');
+
+        $this->assertSame(1, Assessment::where('subject_id', $subject->id)->count());
+    }
+
+    // ...and the same request over XHR comes back as JSON, never an HTML error page.
+    public function test_taken_assessment_name_returns_json_errors_for_an_ajax_submit(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $section = Section::findOrFail($subject->sections_id);
+        Assessment::create($this->assessmentModelData($subject));
+
+        $this->actingAs($this->eduA)
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json'])
+            ->post(route('educator.assessments.store'), $this->assessmentPayload($subject, $section, true))
+            ->assertStatus(422)
+            ->assertJsonStructure(['status', 'message', 'errors' => ['assessment_code']]);
+    }
+
+    // Task 32: duplicate() always prefilled "<name> Copy", so the second duplicate always collided.
+    public function test_duplicating_the_same_assessment_twice_proposes_distinct_codes(): void
+    {
+        $subject = $this->subject($this->eduA);
+        $assessment = Assessment::create($this->assessmentModelData($subject));
+
+        $this->actingAs($this->eduA)
+            ->get(route('educator.assessments.duplicate', ['assessment' => $assessment, 'modal' => 1]))
+            ->assertOk()
+            ->assertSee('Q1 Copy', false);
+
+        Assessment::create(['assessment_code' => 'Q1 Copy'] + $this->assessmentModelData($subject));
+
+        $this->actingAs($this->eduA)
+            ->get(route('educator.assessments.duplicate', ['assessment' => $assessment, 'modal' => 1]))
+            ->assertOk()
+            ->assertSee('Q1 Copy 2', false);
+    }
+
+    // An unhandled server error on an XHR must be JSON so the toast can show the real message.
+    public function test_unhandled_errors_on_an_ajax_request_render_as_json(): void
+    {
+        $subject = $this->subject($this->eduB); // not this educator's — authorize() throws 403
+
+        $this->actingAs($this->eduA)
+            ->withHeaders(['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json'])
+            ->delete(route('educator.materials.bulk-destroy'), ['ids' => []])
+            ->assertStatus(422)
+            ->assertHeader('content-type', 'application/json');
+
+        $this->assertNotNull($subject);
+    }
+
     public function test_quiz_correct_answer_is_hidden_in_serialization(): void
     {
         $subject = $this->subject($this->eduA);
@@ -1897,7 +1961,7 @@ class EducatorFeaturesTest extends TestCase
         $subject = $this->subject($this->eduA);
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => '2+2?', 'quiz_type' => 'multiple_choice',
+            'subject_ids' => [$subject->id], 'question' => '2+2?', 'quiz_type' => 'multiple_choice',
             'choices' => ['A' => '3', 'B' => '4', 'C' => '', 'D' => ''], 'correct_answer' => 'B',
         ])->assertRedirect();
 
@@ -1913,14 +1977,14 @@ class EducatorFeaturesTest extends TestCase
 
         // one answer → stored plain
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => 'Capital of PH?', 'quiz_type' => 'identification',
+            'subject_ids' => [$subject->id], 'question' => 'Capital of PH?', 'quiz_type' => 'identification',
             'answers' => ['Manila'],
         ])->assertRedirect();
         $this->assertSame('Manila', Quiz::latest('id')->first()->correct_answer);
 
         // multiple answers → stored as JSON array
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => 'A primary color?', 'quiz_type' => 'identification',
+            'subject_ids' => [$subject->id], 'question' => 'A primary color?', 'quiz_type' => 'identification',
             'answers' => ['red', 'blue', ''],
         ])->assertRedirect();
         $this->assertSame(['red', 'blue'], json_decode(Quiz::latest('id')->first()->correct_answer, true));
@@ -1937,7 +2001,7 @@ class EducatorFeaturesTest extends TestCase
         $this->actingAs($this->eduA)
             ->get(route('educator.quizzes.create', ['modal' => 1]))
             ->assertOk()
-            ->assertSee('Choose Subject', false)
+            ->assertSee('Choose Subjects', false) // Task 32: multi-select
             ->assertSee('Create', false);
     }
 
@@ -1950,7 +2014,7 @@ class EducatorFeaturesTest extends TestCase
         $a2 = Assessment::create(['assessment_code' => 'Q2'] + $this->assessmentModelData($subject));
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => 'Shared?', 'quiz_type' => 'identification',
+            'subject_ids' => [$subject->id], 'question' => 'Shared?', 'quiz_type' => 'identification',
             'answers' => ['yes'],
         ])->assertRedirect();
 
@@ -1974,7 +2038,7 @@ class EducatorFeaturesTest extends TestCase
         $otherAssessment = Assessment::create($this->assessmentModelData($otherSubject));
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => 'Cross subject?', 'quiz_type' => 'identification',
+            'subject_ids' => [$subject->id], 'question' => 'Cross subject?', 'quiz_type' => 'identification',
             'answers' => ['yes'], 'assessment_ids' => [$otherAssessment->id],
         ])->assertRedirect();
 
@@ -1994,7 +2058,7 @@ class EducatorFeaturesTest extends TestCase
         $a2 = Assessment::create(['assessment_code' => 'Q2'] + $this->assessmentModelData($subject));
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => 'Tagged at creation?', 'quiz_type' => 'identification',
+            'subject_ids' => [$subject->id], 'question' => 'Tagged at creation?', 'quiz_type' => 'identification',
             'answers' => ['yes'], 'assessment_ids' => [$a1->id, $a2->id],
         ])->assertRedirect();
 
@@ -2014,7 +2078,7 @@ class EducatorFeaturesTest extends TestCase
         ]);
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
-            'subject_id' => $subject->id,
+            'subject_ids' => [$subject->id],
             'assessment_ids' => [$wrongAssessment->id],
             'files' => [$file],
         ])->assertRedirect();
@@ -2033,7 +2097,7 @@ class EducatorFeaturesTest extends TestCase
         $subject = $this->subject($this->eduA);
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.store'), [
-            'subject_id' => $subject->id, 'question' => 'Manual batch?', 'quiz_type' => 'identification',
+            'subject_ids' => [$subject->id], 'question' => 'Manual batch?', 'quiz_type' => 'identification',
             'answers' => ['yes'],
         ])->assertRedirect();
 
@@ -2045,7 +2109,7 @@ class EducatorFeaturesTest extends TestCase
         ]);
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
-            'subject_id' => $subject->id,
+            'subject_ids' => [$subject->id],
             'files' => [$file],
         ])->assertRedirect();
 
@@ -2080,11 +2144,45 @@ class EducatorFeaturesTest extends TestCase
         ]);
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
-            'subject_id' => $subject->id,
+            'subject_ids' => [$subject->id],
             'files' => [$file],
         ])->assertRedirect();
 
         $this->assertSame(2, Quiz::where('subject_id', $subject->id)->count());
+    }
+
+    // Task 32: one file uploaded for three subjects must stay ONE set of questions, shared through
+    // tbl_quiz_subject — N rows, not 3N — under a single batch label.
+    public function test_bulk_upload_to_several_subjects_shares_one_set_of_questions(): void
+    {
+        $subjects = collect([$this->subject($this->eduA), $this->subject($this->eduA), $this->subject($this->eduA)]);
+
+        $file = $this->quizUploadFile('shared-quiz.xlsx', [
+            ['2+2?', 'multiple_choice', '3', '4', '5', '6', 'B'],
+            ['Capital of PH?', 'identification', '', '', '', '', 'Manila'],
+        ]);
+
+        $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
+            'subject_ids' => $subjects->pluck('id')->all(),
+            'files' => [$file],
+        ])->assertRedirect();
+
+        $quizzes = Quiz::where('educator_id', $this->eduA->id)->get();
+        $this->assertCount(2, $quizzes);                                      // not 6
+        $this->assertCount(1, $quizzes->pluck('batch_label')->unique());       // one shared batch
+        $this->assertSame(6, DB::table('tbl_quiz_subject')->count());          // 2 questions x 3 subjects
+
+        foreach ($quizzes as $quiz) {
+            $this->assertEqualsCanonicalizing($subjects->pluck('id')->all(), $quiz->subjects->pluck('id')->all());
+        }
+
+        // ...and the bank finds them under every one of those subjects.
+        foreach ($subjects as $subject) {
+            $this->actingAs($this->eduA)
+                ->get(route('educator.quizzes.index', ['subject' => $subject->id]))
+                ->assertOk()
+                ->assertSee('Capital of PH?');
+        }
     }
 
     public function test_bulk_upload_is_all_or_nothing_when_any_row_is_invalid(): void
@@ -2098,7 +2196,7 @@ class EducatorFeaturesTest extends TestCase
         $file = File::createWithContent('quiz.csv', $csv);
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
-            'subject_id' => $subject->id,
+            'subject_ids' => [$subject->id],
             'files' => [$file],
         ])->assertSessionHasErrors('files');
 
@@ -2113,7 +2211,7 @@ class EducatorFeaturesTest extends TestCase
         $bad = File::createWithContent('notes.pdf', '%PDF-1.4 fake');
 
         $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
-            'subject_id' => $subject->id,
+            'subject_ids' => [$subject->id],
             'files' => [$bad],
         ])->assertSessionHasErrors('files.0');
 
@@ -2130,7 +2228,7 @@ class EducatorFeaturesTest extends TestCase
         ], ['name', 'email']);
 
         $response = $this->actingAs($this->eduA)->post(route('educator.quizzes.upload'), [
-            'subject_id' => $subject->id,
+            'subject_ids' => [$subject->id],
             'files' => [$file],
         ])->assertSessionHasErrors('files');
 

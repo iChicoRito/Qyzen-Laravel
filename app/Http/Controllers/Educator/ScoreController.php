@@ -24,6 +24,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -211,7 +212,7 @@ class ScoreController extends Controller
      * deactivated — the caller renders a notice fragment, because this is loaded into a modal
      * where an error page would be injected verbatim. A genuinely unknown id still 404s.
      *
-     * @return array{0: Subject, 1: Section, 2: AcademicTerm, 3: \Illuminate\Support\Collection}|null
+     * @return array{0: Subject, 1: Section, 2: AcademicTerm, 3: Collection}|null
      */
     private function classContext(Request $request): ?array
     {

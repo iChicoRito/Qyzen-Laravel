@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -38,25 +39,27 @@ class QuizController extends Controller
         $selectedSubject = $request->query('subject');
         $selectedAssessment = $request->query('assessment');
 
+        // Task 32: every subject/section predicate reads the tbl_quiz_subject pivot, so a question
+        // shared across subjects is found under each of them.
         $query = Quiz::visibleTo(Auth::user())
-            ->with(['subject:id,subject_code,subject_name,sections_id', 'subject.section:id,section_name', 'eligibleAssessments:id,assessment_code']);
+            ->with(['subjects:id,subject_code,subject_name,sections_id', 'subjects.section:id,section_name', 'eligibleAssessments:id,assessment_code']);
         TableQuery::search($query, $request->query('search'), [
             'question',
-            fn (Builder $q, string $term) => $q->orWhereHas('subject', fn ($s) => $s
+            fn (Builder $q, string $term) => $q->orWhereHas('subjects', fn ($s) => $s
                 ->where('subject_code', 'like', "%{$term}%")
                 ->orWhere('subject_name', 'like', "%{$term}%")),
         ]);
         TableQuery::filters($query, $request, [
-            'section' => fn (Builder $q, string $value) => $q->whereHas('subject', fn ($s) => $s->where('sections_id', $value)),
-            'subject' => fn (Builder $q, string $value) => $q->where('subject_id', $value)
-                ->when($selectedSection, fn (Builder $q) => $q->whereHas('subject', fn ($s) => $s->where('sections_id', $selectedSection))),
+            'section' => fn (Builder $q, string $value) => $q->whereHas('subjects', fn ($s) => $s->where('sections_id', $value)),
+            'subject' => fn (Builder $q, string $value) => $q->whereHas('subjects', fn ($s) => $s->whereKey($value)
+                ->when($selectedSection, fn ($s) => $s->where('sections_id', $selectedSection))),
             'assessment' => fn (Builder $q, string $value) => $q->whereHas('eligibleAssessments', fn ($a) => $a
                 ->where('assessment_code', $value)
                 ->when($selectedSection, fn ($a) => $a->whereHas('subject', fn ($s) => $s->where('sections_id', $selectedSection)))
                 ->when($selectedSubject, fn ($a) => $a->where('subject_id', $selectedSubject))),
             'batch' => fn (Builder $q, string $value) => $q->where('batch_label', $value)
-                ->when($selectedSection, fn (Builder $q) => $q->whereHas('subject', fn ($s) => $s->where('sections_id', $selectedSection)))
-                ->when($selectedSubject, fn (Builder $q) => $q->where('subject_id', $selectedSubject))
+                ->when($selectedSection, fn (Builder $q) => $q->whereHas('subjects', fn ($s) => $s->where('sections_id', $selectedSection)))
+                ->when($selectedSubject, fn (Builder $q) => $q->whereHas('subjects', fn ($s) => $s->whereKey($selectedSubject)))
                 ->when($selectedAssessment, fn (Builder $q) => $q->whereHas('eligibleAssessments', fn ($a) => $a->where('assessment_code', $selectedAssessment))),
         ]);
         TableQuery::sort($query, $request, ['question' => 'question', 'id' => 'id'], 'id', 'desc');
@@ -64,10 +67,13 @@ class QuizController extends Controller
         $quizzes = $query->paginate(TableQuery::perPage($request))->withQueryString();
         $filterSections = $this->sectionOptions();
         $filterSubjects = $this->subjectOptions($selectedSection);
+        // Task 32: the upload modal must offer every subject regardless of the active section
+        // filter — a shared upload deliberately spans sections.
+        $uploadSubjects = $this->subjectOptions();
         $filterAssessments = $this->assessmentFilterOptions($selectedSection, $selectedSubject);
         $batches = $this->batchOptions($selectedSection, $selectedSubject, $selectedAssessment);
 
-        return view('educator.quizzes.index', compact('quizzes', 'filterSections', 'filterSubjects', 'filterAssessments', 'batches'));
+        return view('educator.quizzes.index', compact('quizzes', 'filterSections', 'filterSubjects', 'uploadSubjects', 'filterAssessments', 'batches'));
     }
 
     public function create(Request $request): View
@@ -85,8 +91,9 @@ class QuizController extends Controller
         $this->authorize('create', Quiz::class);
 
         $data = $request->validated();
-        $subject = Subject::visibleTo(Auth::user())->findOrFail($data['subject_id']);
-        $quiz = $this->makeQuiz($subject->id, $data);
+        $subjects = Subject::visibleTo(Auth::user())->whereKey($data['subject_ids'])->get();
+        abort_if($subjects->isEmpty(), 404);
+        $quiz = $this->makeQuiz($subjects, $data);
         $this->syncAssessments($quiz, $data['assessment_ids'] ?? []);
 
         return redirect()->route('educator.quizzes.index')->with('status', 'Question added to the bank.');
@@ -107,14 +114,18 @@ class QuizController extends Controller
         $this->authorize('update', $quiz);
 
         $data = $request->validated();
-        $subject = Subject::visibleTo(Auth::user())->findOrFail($data['subject_id']);
+        $subjects = Subject::visibleTo(Auth::user())->whereKey($data['subject_ids'])->get();
+        abort_if($subjects->isEmpty(), 404);
         $quiz->update([
-            'subject_id' => $subject->id,
+            'subject_id' => $subjects->first()->id,
             'question' => $data['question'],
             'quiz_type' => $data['quiz_type'],
             'choices' => $data['quiz_type'] === 'multiple_choice' ? $data['choices'] : null,
             'correct_answer' => $this->correctAnswerFrom($data),
         ]);
+        // sync(), not syncWithoutDetaching(): unticking a subject here must actually unshare it.
+        // The saved() mirror above has already re-added the primary, which is in this list anyway.
+        $quiz->subjects()->sync($subjects->pluck('id')->all());
         if (array_key_exists('assessment_ids', $data)) {
             $this->syncAssessments($quiz, $data['assessment_ids'] ?? []);
         }
@@ -213,7 +224,7 @@ class QuizController extends Controller
         // query only if archived question volume gets large enough to matter.
         $quizzes = Quiz::onlyTrashed()
             ->visibleTo(Auth::user())
-            ->with(['subject:id,subject_code,subject_name,sections_id', 'subject.section:id,section_name', 'eligibleAssessments:id,assessment_code'])
+            ->with(['subjects:id,subject_code,subject_name,sections_id', 'subjects.section:id,section_name', 'eligibleAssessments:id,assessment_code'])
             ->orderByDesc('deleted_at')
             ->orderByDesc('id')
             ->get();
@@ -223,21 +234,27 @@ class QuizController extends Controller
         $selectedBatch = (string) $request->query('batch', '');
         $search = trim((string) $request->query('search', ''));
 
-        $filterSections = $quizzes->pluck('subject.section')
+        // Task 32: a question may sit under several subjects, so "is this quiz in section X /
+        // subject Y" is an any-of test over the pivot, not a comparison with one column.
+        $inSection = fn (Quiz $quiz, string $sectionId) => $quiz->subjects->contains(fn ($s) => (string) $s->sections_id === $sectionId);
+        $inSubject = fn (Quiz $quiz, string $subjectId) => $quiz->subjects->contains(fn ($s) => (string) $s->id === $subjectId);
+
+        $filterSections = $quizzes->flatMap->subjects
+            ->pluck('section')
             ->filter()
             ->unique('id')
             ->sortBy('section_name')
             ->values();
         $filterSubjects = $quizzes
-            ->when($selectedSection !== '', fn ($items) => $items->filter(fn (Quiz $quiz) => (string) $quiz->subject?->sections_id === $selectedSection))
-            ->pluck('subject')
+            ->when($selectedSection !== '', fn ($items) => $items->filter(fn (Quiz $quiz) => $inSection($quiz, $selectedSection)))
+            ->flatMap->subjects
             ->filter()
             ->unique('id')
             ->sortBy('subject_name')
             ->values();
         $filterBatches = $quizzes
-            ->when($selectedSection !== '', fn ($items) => $items->filter(fn (Quiz $quiz) => (string) $quiz->subject?->sections_id === $selectedSection))
-            ->when($selectedSubject !== '', fn ($items) => $items->filter(fn (Quiz $quiz) => (string) $quiz->subject_id === $selectedSubject))
+            ->when($selectedSection !== '', fn ($items) => $items->filter(fn (Quiz $quiz) => $inSection($quiz, $selectedSection)))
+            ->when($selectedSubject !== '', fn ($items) => $items->filter(fn (Quiz $quiz) => $inSubject($quiz, $selectedSubject)))
             ->filter(fn (Quiz $quiz) => filled($quiz->batch_label))
             ->groupBy('batch_label')
             ->map(fn ($items, string $label) => ['label' => $label, 'count' => $items->count()])
@@ -245,12 +262,12 @@ class QuizController extends Controller
             ->values();
 
         $groups = $quizzes
-            ->filter(function (Quiz $quiz) use ($selectedSection, $selectedSubject, $selectedBatch, $search): bool {
-                if ($selectedSection !== '' && (string) $quiz->subject?->sections_id !== $selectedSection) {
+            ->filter(function (Quiz $quiz) use ($selectedSection, $selectedSubject, $selectedBatch, $search, $inSection, $inSubject): bool {
+                if ($selectedSection !== '' && ! $inSection($quiz, $selectedSection)) {
                     return false;
                 }
 
-                if ($selectedSubject !== '' && (string) $quiz->subject_id !== $selectedSubject) {
+                if ($selectedSubject !== '' && ! $inSubject($quiz, $selectedSubject)) {
                     return false;
                 }
 
@@ -265,9 +282,9 @@ class QuizController extends Controller
                 $haystack = strtolower(implode(' ', array_filter([
                     $quiz->batch_label,
                     $quiz->question,
-                    $quiz->subject?->subject_code,
-                    $quiz->subject?->subject_name,
-                    $quiz->subject?->section?->section_name,
+                    $quiz->subjects->pluck('subject_code')->implode(' '),
+                    $quiz->subjects->pluck('subject_name')->implode(' '),
+                    $quiz->subjects->pluck('section.section_name')->filter()->implode(' '),
                     $quiz->eligibleAssessments->pluck('assessment_code')->implode(' '),
                 ])));
 
@@ -282,8 +299,8 @@ class QuizController extends Controller
                     'key' => $key,
                     'label' => $first->batch_label ?? 'Single Question',
                     'count' => $quizzes->count(),
-                    'subject' => $first->subject,
-                    'section' => $first->subject?->section,
+                    'subjects' => $first->subjects,
+                    'sections' => $first->subjects->pluck('section')->filter()->unique('id')->values(),
                     'deleted_at' => $quizzes->max('deleted_at'),
                     'assessments' => $quizzes->flatMap(fn (Quiz $quiz) => $quiz->eligibleAssessments->pluck('assessment_code'))->unique()->values(),
                 ];
@@ -344,30 +361,38 @@ class QuizController extends Controller
     {
         $this->authorize('create', Quiz::class);
 
+        // Task 32: one file may be filed under several subjects at once. A subject belongs to
+        // exactly one section, so picking subjects across sections IS the multi-section case.
         $request->validate([
-            'subject_id' => ['required', 'integer'],
+            'subject_ids' => ['required', 'array', 'min:1'],
+            'subject_ids.*' => ['integer', Rule::exists('tbl_subjects', 'id')->where('educator_id', Auth::id())],
             'assessment_ids' => ['nullable', 'array'],
             'assessment_ids.*' => [Rule::exists('tbl_assessments', 'id')->where('educator_id', Auth::id())],
             'files' => ['required', 'array', 'min:1'],
             'files.*' => ['required', 'file', 'mimes:xlsx,xls,csv'],
         ], [
+            'subject_ids.required' => 'Please choose at least one subject for these questions.',
             'files.required' => 'Please choose at least one file to upload.',
             'files.*.mimes' => 'Wrong file format: :input is not an Excel/CSV file. Only .xlsx, .xls or .csv are accepted.',
             'files.*.file' => 'The upload was not a valid file.',
         ]);
 
-        $subject = Subject::visibleTo(Auth::user())->findOrFail($request->input('subject_id'));
+        $subjects = Subject::visibleTo(Auth::user())->whereKey($request->input('subject_ids'))->get();
+        abort_if($subjects->isEmpty(), 404);
+        $subjectIds = $subjects->pluck('id')->all();
+        $primary = $subjects->first();
         $assessmentIds = array_filter((array) $request->input('assessment_ids', []));
         $files = $request->file('files');
         $uploadedAt = now()->format('M j, Y g:i A');
 
         // All-or-nothing: validate every row of every file FIRST. If ANY row is bad (wrong
         // format, blank, missing/invalid columns), reject the whole upload — nothing is saved.
+        // The file is parsed ONCE regardless of how many subjects it is shared with.
         $errors = [];
         $rows = [];
         foreach ($files as $file) {
             $batchLabel = "Upload: {$file->getClientOriginalName()} · {$uploadedAt}";
-            $import = new QuizzesImport($subject, $file->getClientOriginalName(), $batchLabel);
+            $import = new QuizzesImport($primary, $file->getClientOriginalName(), $batchLabel);
             Excel::import($import, $file);
             $errors = array_merge($errors, $import->errors());
             $rows = array_merge($rows, $import->validRows());
@@ -378,10 +403,13 @@ class QuizController extends Controller
             throw ValidationException::withMessages(['files' => $errors]);
         }
 
-        $created = DB::transaction(function () use ($rows, $assessmentIds) {
+        $created = DB::transaction(function () use ($rows, $subjectIds, $assessmentIds) {
+            // One row per question, not one per (question × subject) — sharing lives in the pivot.
             $quizIds = [];
             foreach ($rows as $row) {
-                $quizIds[] = Quiz::create($row)->id; // create() applies the choices array cast + timestamps
+                $quiz = Quiz::create($row); // create() applies the choices array cast + timestamps
+                $quiz->subjects()->sync($subjectIds);
+                $quizIds[] = $quiz->id;
             }
             foreach (Assessment::whereKey($assessmentIds)->get() as $assessment) {
                 $assessment->eligibleQuizzes()->syncWithoutDetaching($quizIds);
@@ -390,7 +418,12 @@ class QuizController extends Controller
             return count($rows);
         });
 
-        return redirect()->route('educator.quizzes.index')->with('status', "Uploaded {$created} question(s) to the bank.");
+        $n = count($subjectIds);
+
+        return redirect()->route('educator.quizzes.index')
+            ->with('status', $n === 1
+                ? "Uploaded {$created} question(s) to the bank."
+                : "Uploaded {$created} question(s) to the bank, shared across {$n} subjects.");
     }
 
     private function sectionOptions()
@@ -422,8 +455,8 @@ class QuizController extends Controller
     private function batchOptions(?string $sectionId = null, ?string $subjectId = null, ?string $assessmentCode = null)
     {
         return Quiz::visibleTo(Auth::user())
-            ->when($sectionId, fn ($q) => $q->whereHas('subject', fn ($s) => $s->where('sections_id', $sectionId)))
-            ->when($subjectId, fn ($q) => $q->where('subject_id', $subjectId))
+            ->when($sectionId, fn ($q) => $q->whereHas('subjects', fn ($s) => $s->where('sections_id', $sectionId)))
+            ->when($subjectId, fn ($q) => $q->whereHas('subjects', fn ($s) => $s->whereKey($subjectId)))
             ->when($assessmentCode, fn ($q) => $q->whereHas('eligibleAssessments', fn ($a) => $a->where('assessment_code', $assessmentCode)))
             ->whereNotNull('batch_label')
             ->selectRaw('batch_label, COUNT(*) as question_count, MAX(id) as max_id')
@@ -442,10 +475,11 @@ class QuizController extends Controller
         return $quiz->batch_label ?? self::SINGLE_BATCH_PREFIX.$quiz->getKey();
     }
 
-    private function makeQuiz(int $subjectId, array $data): Quiz
+    /** @param  Collection<int, Subject>  $subjects */
+    private function makeQuiz(Collection $subjects, array $data): Quiz
     {
-        return Quiz::create([
-            'subject_id' => $subjectId,
+        $quiz = Quiz::create([
+            'subject_id' => $subjects->first()->id,
             'educator_id' => Auth::id(),
             'question' => $data['question'],
             'quiz_type' => $data['quiz_type'],
@@ -453,6 +487,9 @@ class QuizController extends Controller
             'correct_answer' => $this->correctAnswerFrom($data),
             'batch_label' => 'Manual · '.now()->format('M j, Y g:i A'),
         ]);
+        $quiz->subjects()->sync($subjects->pluck('id')->all());
+
+        return $quiz;
     }
 
     // MC: the picked choice key. Identification: one accepted answer stored plain,

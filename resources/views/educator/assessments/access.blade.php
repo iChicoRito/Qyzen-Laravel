@@ -5,7 +5,7 @@
     @include('admin._status')
     <div class="kt-card">
         <div class="kt-card-content p-5 flex flex-col gap-4" data-exempt-list>
-            <h3 class="text-base font-semibold text-mono">Manage special access</h3>
+            <h3 class="text-base font-semibold text-mono">Special Access</h3>
             <p class="text-sm text-secondary-foreground">Grant selected students one additional attempt after the schedule closes — whether they missed it entirely or need a retake — without changing the assessment schedule for everyone else.</p>
 
             @if ($students->isEmpty())

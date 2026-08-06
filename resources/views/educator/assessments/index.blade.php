@@ -83,15 +83,15 @@
                             </a>
                         </div>
                         <div class="kt-menu-item">
-                            <a class="kt-menu-link" href="#" data-modal-url="{{ route('educator.assessments.exemptions', $a, false) }}" data-modal-target="#form_modal" data-modal-title="Manage exemptions">
+                            <a class="kt-menu-link" href="#" data-modal-url="{{ route('educator.assessments.exemptions', $a, false) }}" data-modal-target="#form_modal" data-modal-title="Exemptions">
                                 <span class="kt-menu-icon"><i class="ki-filled ki-user-tick"></i></span>
-                                <span class="kt-menu-title">Manage Exemptions</span>
+                                <span class="kt-menu-title">Exemptions</span>
                             </a>
                         </div>
                         <div class="kt-menu-item">
-                            <a class="kt-menu-link" href="#" data-modal-url="{{ route('educator.assessments.access', $a, false) }}" data-modal-target="#form_modal" data-modal-title="Manage special access">
+                            <a class="kt-menu-link" href="#" data-modal-url="{{ route('educator.assessments.access', $a, false) }}" data-modal-target="#form_modal" data-modal-title="Special Access">
                                 <span class="kt-menu-icon"><i class="ki-filled ki-time"></i></span>
-                                <span class="kt-menu-title">Manage Special Access</span>
+                                <span class="kt-menu-title">Special Access</span>
                             </a>
                         </div>
                     </x-table-actions>

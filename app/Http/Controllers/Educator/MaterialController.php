@@ -35,15 +35,20 @@ class MaterialController extends Controller
         $this->authorize('viewAny', LearningMaterial::class);
 
         $query = LearningMaterial::visibleTo(Auth::user())
-            ->with(['subject:id,subject_code,subject_name', 'section:id,section_name']);
+            ->with(['subjects:id,subject_code,subject_name,sections_id', 'subjects.section:id,section_name']);
         TableQuery::search($query, $request->query('search'), ['file_name', 'file_extension']);
-        // Task 29: term filter. Materials have no term column — they inherit it through
-        // subject → section → academic term (the same chain visibleTo() gates on).
+        // Task 29/32: materials have no term column — they inherit it through subject → section →
+        // academic term. Every filter here reads the tbl_learning_material_subject pivot, not the
+        // primary subject_id/section_id columns, so a file shared across subjects is found under
+        // each of them. The term filter must also read the tbl_sections_term PIVOT (not the legacy
+        // tbl_sections.academic_term_id scalar): a section rolled from PRELIM into MIDTERM keeps
+        // academic_term_id = PRELIM, so the old closure matched zero sections and every term
+        // returned "No materials" — the same chain inActiveTerm() gates on.
         TableQuery::filters($query, $request, [
-            'subject' => 'subject_id',
-            'section' => 'section_id',
+            'subject' => fn (Builder $q, $value) => $q->whereHas('subjects', fn ($s) => $s->whereKey($value)),
+            'section' => fn (Builder $q, $value) => $q->whereHas('subjects', fn ($s) => $s->where('sections_id', $value)),
             'status' => 'is_active',
-            'term' => fn (Builder $q, $value) => $q->whereHas('subject.section', fn ($s) => $s->where('academic_term_id', $value)),
+            'term' => fn (Builder $q, $value) => $q->whereHas('subjects.section.terms', fn ($t) => $t->whereKey($value)),
         ]);
         TableQuery::sort($query, $request, [
             'file' => 'file_name',
@@ -66,14 +71,14 @@ class MaterialController extends Controller
             'id' => 'id',
         ], 'id', 'desc');
 
+        // Task 32: one row is one file now, so there is nothing left to group by.
         $materials = $query->paginate(TableQuery::perPage($request))->withQueryString();
-        $groups = $materials->getCollection()->groupBy(fn ($m) => $m->subject_id.'::'.$m->section_id);
 
         $filterSubjects = Subject::visibleTo(Auth::user())->orderBy('subject_code')->get(['id', 'subject_code', 'subject_name']);
         $filterSections = Section::visibleTo(Auth::user())->orderBy('section_name')->get(['id', 'section_name']);
         $filterTerms = AcademicTerm::where('is_active', true)->orderBy('term_name')->get(['id', 'term_name']);
 
-        return view('educator.materials.index', compact('groups', 'materials', 'filterSubjects', 'filterSections', 'filterTerms'));
+        return view('educator.materials.index', compact('materials', 'filterSubjects', 'filterSections', 'filterTerms'));
     }
 
     public function create(): View
@@ -92,24 +97,30 @@ class MaterialController extends Controller
         $data = $request->validated();
         $subjects = Subject::visibleTo(Auth::user())->whereKey($data['subject_ids'])->get();
 
+        // Task 32: one file is ONE material row, shared with every selected subject through the
+        // pivot. It used to be one row per (file × subject), which duplicated the record for every
+        // destination even though the stored object was already shared.
+        $links = $subjects->mapWithKeys(fn (Subject $subject) => [
+            $subject->id => ['section_id' => $subject->sections_id],
+        ])->all();
+        $primary = $subjects->first();
+
         $files = $request->file('files');
         foreach ($files as $file) {
-            // Store the physical file once; every selected subject reuses this same path.
             $path = $file->store('learning-materials/'.Auth::id(), self::DISK);
-            foreach ($subjects as $subject) {
-                LearningMaterial::create([
-                    'educator_id' => Auth::id(),
-                    'subject_id' => $subject->id,
-                    'section_id' => $subject->sections_id,
-                    'storage_bucket' => self::DISK,
-                    'storage_path' => $path,
-                    'file_name' => $file->getClientOriginalName(),
-                    'file_extension' => $file->getClientOriginalExtension(),
-                    'mime_type' => $file->getClientMimeType(),
-                    'file_size' => $file->getSize(),
-                    'is_active' => true,
-                ]);
-            }
+            $material = LearningMaterial::create([
+                'educator_id' => Auth::id(),
+                'subject_id' => $primary->id,
+                'section_id' => $primary->sections_id,
+                'storage_bucket' => self::DISK,
+                'storage_path' => $path,
+                'file_name' => $file->getClientOriginalName(),
+                'file_extension' => $file->getClientOriginalExtension(),
+                'mime_type' => $file->getClientMimeType(),
+                'file_size' => $file->getSize(),
+                'is_active' => true,
+            ]);
+            $material->subjects()->sync($links);
         }
 
         // One message per student per subject (authorization checks enrollment per subject_id),
@@ -153,13 +164,15 @@ class MaterialController extends Controller
     {
         $this->authorize('delete', $material);
 
-        // Capture recipients + context before the row is gone.
-        $subjectId = $material->subject_id;
-        $sectionId = $material->section_id;
-        $studentIds = $this->enrolledStudentIds($subjectId);
+        // Capture recipients + context before the row (and its pivot links) are gone. Task 32:
+        // every linked subject is notified, not just the primary.
+        $targets = $material->subjects->map(fn (Subject $subject) => [
+            'subject_id' => $subject->id,
+            'section_id' => $subject->pivot->section_id ?? $subject->sections_id,
+        ]);
 
-        // Orphan cleanup: the same storage object may be shared by other subjects' rows —
-        // only delete it from storage once no row references it anymore.
+        // Orphan cleanup: a pre-Task-32 upload may still have sibling rows sharing this storage
+        // object — only delete it from storage once no row references it anymore.
         $stillReferenced = LearningMaterial::where('id', '!=', $material->id)
             ->where('storage_path', $material->storage_path)
             ->exists();
@@ -168,11 +181,13 @@ class MaterialController extends Controller
             Storage::disk($material->storageDisk())->delete($material->storage_path);
         }
 
-        $this->notifications->emitToMany(Auth::user(), 'learning_material_deleted', $studentIds, [
-            'subject_id' => $subjectId, 'section_id' => $sectionId,
-            'title' => 'Learning material removed',
-            'link_path' => route('student.materials.index'),
-        ]);
+        foreach ($targets as $target) {
+            $this->notifications->emitToMany(Auth::user(), 'learning_material_deleted', $this->enrolledStudentIds($target['subject_id']), [
+                'subject_id' => $target['subject_id'], 'section_id' => $target['section_id'],
+                'title' => 'Learning material removed',
+                'link_path' => route('student.materials.index'),
+            ]);
+        }
 
         return redirect()->route('educator.materials.index')->with('status', 'Material deleted.');
     }
@@ -189,10 +204,16 @@ class MaterialController extends Controller
             'ids.*' => ['integer', Rule::exists('tbl_learning_materials', 'id')],
         ]);
 
-        $materials = LearningMaterial::where('educator_id', Auth::id())->whereKey($data['ids'])->get();
+        $materials = LearningMaterial::with('subjects')->where('educator_id', Auth::id())->whereKey($data['ids'])->get();
 
-        // Recipients + shared paths captured before rows are gone.
-        $notifyBySubject = $materials->groupBy('subject_id');
+        // Recipients + shared paths captured before rows are gone. Task 32: grouped by every
+        // linked subject, not just each row's primary.
+        $notifyBySubject = $materials
+            ->flatMap(fn (LearningMaterial $m) => $m->subjects->map(fn (Subject $s) => [
+                'subject_id' => $s->id,
+                'section_id' => $s->pivot->section_id ?? $s->sections_id,
+            ]))
+            ->groupBy('subject_id');
         $paths = $materials->pluck('storage_path')->unique();
 
         DB::transaction(function () use ($materials): void {
@@ -211,7 +232,7 @@ class MaterialController extends Controller
 
         foreach ($notifyBySubject as $subjectId => $group) {
             $this->notifications->emitToMany(Auth::user(), 'learning_material_deleted', $this->enrolledStudentIds((int) $subjectId), [
-                'subject_id' => (int) $subjectId, 'section_id' => $group->first()->section_id,
+                'subject_id' => (int) $subjectId, 'section_id' => $group->first()['section_id'],
                 'title' => 'Learning material removed',
                 'link_path' => route('student.materials.index'),
             ]);

@@ -18,7 +18,9 @@ class StoreQuizRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'subject_id' => ['required', Rule::exists('tbl_subjects', 'id')->where('educator_id', Auth::id())],
+            // Task 32: a question may be filed under several subjects; the pivot is the truth.
+            'subject_ids' => ['required', 'array', 'min:1'],
+            'subject_ids.*' => ['integer', Rule::exists('tbl_subjects', 'id')->where('educator_id', Auth::id())],
             'assessment_ids' => ['nullable', 'array'],
             'assessment_ids.*' => [Rule::exists('tbl_assessments', 'id')->where('educator_id', Auth::id())],
         ] + $this->questionRules();

@@ -26,9 +26,13 @@ class MaterialController extends Controller
             ->select('tbl_learning_materials.*')
             ->leftJoin('tbl_subjects as sort_subjects', 'sort_subjects.id', '=', 'tbl_learning_materials.subject_id')
             ->leftJoin('tbl_sections as sort_sections', 'sort_sections.id', '=', 'tbl_learning_materials.section_id')
-            ->with(['subject:id,subject_code,subject_name', 'section:id,section_name']);
+            ->with(['subjects:id,subject_code,subject_name,sections_id', 'subjects.section:id,section_name']);
         TableQuery::search($query, $request->query('search'), ['file_name', 'file_extension']);
-        TableQuery::filters($query, $request, ['subject' => 'subject_id', 'section' => 'section_id']);
+        // Task 32: one file may be shared across subjects, so filter through the pivot.
+        TableQuery::filters($query, $request, [
+            'subject' => fn (Builder $q, $value) => $q->whereHas('subjects', fn ($s) => $s->whereKey($value)),
+            'section' => fn (Builder $q, $value) => $q->whereHas('subjects', fn ($s) => $s->where('sections_id', $value)),
+        ]);
         TableQuery::sort($query, $request, [
             'file' => 'file_name',
             'subject' => function (Builder $q, string $direction): void {
@@ -42,15 +46,17 @@ class MaterialController extends Controller
             'id' => 'id',
         ], 'id', 'desc');
 
+        // Task 32: one row is one file now — nothing left to group by.
         $materials = $query->paginate(TableQuery::perPage($request))->withQueryString();
-        $groups = $materials->getCollection()->groupBy(fn ($m) => $m->subject_id.'::'.$m->section_id);
 
         $enrolledSubjectIds = Enrolled::visibleTo(Auth::user())->where('student_id', Auth::id())->where('is_active', true)->pluck('subject_id')->unique();
         $filterSubjects = Subject::visibleTo(Auth::user())->whereIn('id', $enrolledSubjectIds)->orderBy('subject_name')->get(['id', 'subject_code', 'subject_name']);
         $enrolledSectionIds = Subject::visibleTo(Auth::user())->whereIn('id', $enrolledSubjectIds)->pluck('sections_id')->unique()->filter();
         $filterSections = Section::visibleTo(Auth::user())->whereIn('id', $enrolledSectionIds)->orderBy('section_name')->get(['id', 'section_name']);
 
-        return view('student.materials.index', compact('groups', 'materials', 'filterSubjects', 'filterSections'));
+        // A shared file may also be assigned to subjects this student is not enrolled in — the view
+        // renders the intersection only, so the list never leaks another class's subject names.
+        return view('student.materials.index', compact('materials', 'filterSubjects', 'filterSections', 'enrolledSubjectIds'));
     }
 
     public function download(LearningMaterial $material)

@@ -1,7 +1,10 @@
 @php
     $q = $quiz ?? null;
     $choices = old('choices', $q?->choices ?? ['A' => '', 'B' => '', 'C' => '', 'D' => '']);
-    $selectedSubject = old('subject_id', $q?->subject_id ?? ($selectedSubject ?? null));
+    // Task 32: a question can be filed under several subjects. Defaults: the ones it is already
+    // shared with (edit), or the subject the educator drilled in from (create).
+    $selectedSubjectIds = collect(old('subject_ids', $q?->subjects->pluck('id')->all() ?? array_filter([$selectedSubject ?? null])))
+        ->map(fn ($id) => (int) $id);
     $type = old('quiz_type', $q?->quiz_type ?? 'multiple_choice');
     $correct = old('correct_answer', $q?->correct_answer);
     // Identification answers: correct_answer may be a plain string or a JSON array of accepted answers.
@@ -13,14 +16,28 @@
     $isMc = $type === 'multiple_choice';
 @endphp
 <div class="flex flex-col gap-5">
-    <div class="flex flex-col gap-1">
-        <label class="kt-form-label">Choose Subject</label>
-        <select name="subject_id" class="kt-select w-full"
-                data-kt-select="true" data-kt-select-enable-search="true"
-                data-kt-select-search-placeholder="Search subjects…">
-            @foreach ($subjects as $s)<option value="{{ $s->id }}" @selected($selectedSubject==$s->id)>{{ $s->subject_code }} — {{ $s->subject_name }} ({{ optional($s->section)->section_name ?? 'No section' }})</option>@endforeach
-        </select>
-        @error('subject_id')<span class="text-xs text-destructive mt-1">{{ $message }}</span>@enderror
+    <div class="flex flex-col gap-1.5">
+        <label class="kt-form-label">Choose Subjects</label>
+        <details class="rounded-lg border border-border" @if($errors->has('subject_ids') || $selectedSubjectIds->isEmpty()) open @endif>
+            <summary class="flex items-center justify-between gap-2 px-4 py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                <span class="text-sm text-mono" data-subject-summary data-subject-summary-default="Select one or more subjects">
+                    {{ $selectedSubjectIds->count() ? $selectedSubjectIds->count().' selected' : 'Select one or more subjects' }}
+                </span>
+                <i class="ki-filled ki-down text-sm text-muted-foreground"></i>
+            </summary>
+            <div class="grid grid-cols-1 gap-2.5 p-3 pt-0 max-h-72 overflow-y-auto kt-scrollable-y">
+                @foreach ($subjects as $s)
+                    <x-checkbox-card
+                        name="subject_ids[]"
+                        :value="$s->id"
+                        :title="$s->subject_name"
+                        :desc="$s->subject_code . ' | ' . (optional($s->section)->section_name ?? 'No section')"
+                        :checked="$selectedSubjectIds->contains($s->id)"
+                        data-subject-option />
+                @endforeach
+            </div>
+        </details>
+        @error('subject_ids')<span class="text-xs text-destructive mt-1">{{ $message }}</span>@enderror
     </div>
 
     {{-- Quiz Type: full-width select drives which section shows (delegated JS on [data-quiz-type]). --}}

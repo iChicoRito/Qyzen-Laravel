@@ -121,14 +121,18 @@ class AssessmentController extends Controller
 
         // One assessment per selected subject; section_id derived from each subject's own section.
         $subjects = Subject::visibleTo(Auth::user())->whereKey($subjectIds)->get(['id', 'sections_id']);
-        foreach ($subjects as $subject) {
-            $assessment = Assessment::create($data + [
-                'educator_id' => Auth::id(),
-                'subject_id' => $subject->id,
-                'section_id' => $subject->sections_id,
-            ]);
 
-            // Publish-on-create: if created already active, notify enrolled students.
+        // Task 32: all-or-nothing. Without this a failure on the Nth subject left the first N-1
+        // committed, so a retry then tripped the unique(code, subject, section, term) index.
+        $created = DB::transaction(fn () => $subjects->map(fn (Subject $subject) => Assessment::create($data + [
+            'educator_id' => Auth::id(),
+            'subject_id' => $subject->id,
+            'section_id' => $subject->sections_id,
+        ])));
+
+        // Publish-on-create: if created already active, notify enrolled students. Outside the
+        // transaction — notifications are best-effort and must never roll the assessment back.
+        foreach ($created as $assessment) {
             if ($assessment->is_active && $shouldNotifyStudents) {
                 $this->notifyEnrolled($assessment, 'assessment_created', 'New assessment published');
             }
@@ -152,7 +156,12 @@ class AssessmentController extends Controller
         $this->authorize('update', $assessment);
 
         $duplicate = $assessment->replicate();
-        $duplicate->assessment_code = substr((string) $assessment->assessment_code, 0, 250).' Copy';
+        $duplicate->assessment_code = $this->uniqueCodeFor(
+            (string) $assessment->assessment_code,
+            $assessment->subject_id,
+            $assessment->section_id,
+            $assessment->term,
+        );
 
         return view('educator.assessments.duplicate', ['assessment' => $duplicate, 'sourceAssessment' => $assessment] + $this->formData());
     }
@@ -568,6 +577,33 @@ class AssessmentController extends Controller
 
         return redirect()->route('educator.assessments.index')
             ->with('status', $message);
+    }
+
+    /**
+     * Task 32: a free assessment_code for (subject, section, term). The duplicate form used to
+     * always prefill "<name> Copy", so duplicating the same assessment twice always collided with
+     * the unique index and 500'd. Walks " Copy", " Copy 2", " Copy 3"… instead.
+     */
+    private function uniqueCodeFor(string $base, int $subjectId, int $sectionId, int $term): string
+    {
+        $base = substr($base, 0, 240);
+
+        for ($n = 1; $n <= 50; $n++) {
+            $candidate = $base.' Copy'.($n > 1 ? " {$n}" : '');
+            $taken = Assessment::where('assessment_code', $candidate)
+                ->where('subject_id', $subjectId)
+                ->where('section_id', $sectionId)
+                ->where('term', $term)
+                ->exists();
+
+            if (! $taken) {
+                return $candidate;
+            }
+        }
+
+        // Bail out of the walk rather than loop forever; the request validator still guards the
+        // actual insert, so the educator gets a field error instead of a duplicate-key 500.
+        return $base.' Copy '.now()->format('His');
     }
 
     private function notifyEnrolled(Assessment $assessment, string $event, string $title): void

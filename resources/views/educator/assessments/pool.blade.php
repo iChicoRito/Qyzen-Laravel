@@ -31,8 +31,9 @@
                     </div>
                     @if ($bankTotal > 8)
                         @php
-                            $filterSubjects = $bankQuestions->map(fn ($q) => $q->subject)->filter()->unique('id')->sortBy('subject_code');
-                            $filterSections = $bankQuestions->map(fn ($q) => $q->subject?->section)->filter()->unique('id')->sortBy('section_name');
+                            // Task 32: a bank question may be filed under several subjects.
+                            $filterSubjects = $bankQuestions->flatMap->subjects->filter()->unique('id')->sortBy('subject_code');
+                            $filterSections = $bankQuestions->flatMap->subjects->pluck('section')->filter()->unique('id')->sortBy('section_name');
                         @endphp
                         <div class="flex flex-wrap items-center gap-2">
                             <label class="kt-input grow min-w-52">
@@ -72,10 +73,11 @@
                             @php
                                 $usedIn = $q->eligibleAssessments->where('id', '!=', $assessment->id)->pluck('assessment_code');
                                 $desc = $q->quiz_type === 'multiple_choice' ? 'Multiple Choice' : 'Identification';
-                                $origin = trim(($q->subject?->subject_code ?? '').' — '.($q->subject?->subject_name ?? ''));
-                                if ($q->subject?->section) {
-                                    $origin .= ' ('.$q->subject->section->section_name.')';
-                                }
+                                $origin = $q->subjects->map(function ($s) {
+                                    $label = trim($s->subject_code.' — '.$s->subject_name);
+
+                                    return $s->section ? $label.' ('.$s->section->section_name.')' : $label;
+                                })->implode(', ');
                                 $desc .= $origin !== '' ? ' · '.$origin : '';
                                 $desc .= $usedIn->isNotEmpty() ? ' · Also used in: '.$usedIn->join(', ') : ' · Not used elsewhere';
                             @endphp
@@ -88,8 +90,9 @@
                                 data-pool-option
                                 data-pool-question-text="{{ mb_strtolower($q->question) }}"
                                 data-pool-question-type="{{ $q->quiz_type }}"
-                                data-pool-question-subject="{{ $q->subject_id }}"
-                                data-pool-question-section="{{ $q->subject?->sections_id }}"
+                                {{-- Space-delimited: one question may belong to several subjects/sections. --}}
+                                data-pool-question-subject="{{ $q->subjects->pluck('id')->implode(' ') }}"
+                                data-pool-question-section="{{ $q->subjects->pluck('sections_id')->unique()->implode(' ') }}"
                                 data-pool-question-batch="{{ $q->batch_label }}" />
                         @endforeach
                         <span class="text-xs text-secondary-foreground px-1 hidden" data-pool-no-match>No questions match your filters.</span>
@@ -169,12 +172,17 @@
                 var subject = subjectFilter ? subjectFilter.value : '';
                 var section = sectionFilter ? sectionFilter.value : '';
                 var visible = 0;
+                // Task 32: the subject/section datasets are space-delimited id lists — a question
+                // may be shared across subjects — so this is an any-of test, not equality.
+                function has(list, value) {
+                    return (list || '').split(' ').indexOf(value) !== -1;
+                }
                 boxes.forEach(function (box) {
                     var label = box.closest('label');
                     var match = (!term || (box.dataset.poolQuestionText || '').indexOf(term) !== -1)
                         && (!type || box.dataset.poolQuestionType === type)
-                        && (!subject || box.dataset.poolQuestionSubject === subject)
-                        && (!section || box.dataset.poolQuestionSection === section);
+                        && (!subject || has(box.dataset.poolQuestionSubject, subject))
+                        && (!section || has(box.dataset.poolQuestionSection, section));
                     if (label) label.classList.toggle('hidden', !match);
                     if (match) visible++;
                 });

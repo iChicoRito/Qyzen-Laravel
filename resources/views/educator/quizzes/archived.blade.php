@@ -52,17 +52,17 @@
                         <span class="text-xs text-secondary-foreground">{{ $group['count'] }} question(s)</span>
                     </div>
                 </td>
+                {{-- Task 32: a batch may be shared across subjects. --}}
                 <td>
-                    @if ($group['subject'])
-                        <div class="flex flex-col gap-1">
-                            <span>{{ $group['subject']->subject_name }}</span>
-                            <span class="text-xs text-secondary-foreground">{{ $group['subject']->subject_code }}</span>
-                        </div>
-                    @else
-                        <span class="text-secondary-foreground">-</span>
-                    @endif
+                    <div class="flex flex-wrap gap-1">
+                        @forelse ($group['subjects'] as $subject)
+                            <span class="kt-badge kt-badge-sm kt-badge-outline" title="{{ $subject->subject_code }}">{{ $subject->subject_name }}</span>
+                        @empty
+                            <span class="text-secondary-foreground">-</span>
+                        @endforelse
+                    </div>
                 </td>
-                <td>{{ $group['section']?->section_name ?? '-' }}</td>
+                <td>{{ $group['sections']->pluck('section_name')->implode(', ') ?: '-' }}</td>
                 <td class="text-secondary-foreground">{{ $group['count'] }}</td>
                 <td>
                     @forelse ($group['assessments'] as $assessmentCode)

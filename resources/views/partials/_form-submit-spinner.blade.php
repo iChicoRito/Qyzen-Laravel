@@ -112,7 +112,19 @@
                 if (!old.src) s.remove();
             });
         }
-        function swapContent(url) {
+        // Task 32: the data-table keeps its search/filter/sort/page entirely in the query string,
+        // but controllers redirect to the bare index — so every create/edit/duplicate wiped the
+        // educator's active filters. The modal never navigates, so at submit time the location is
+        // still the filtered index: carry its query string onto a bare same-page redirect.
+        function keepTableState(url) {
+            var target = new URL(url, window.location.href);
+            if (!target.search && target.pathname === window.location.pathname) {
+                target.search = window.location.search;
+            }
+            return target.pathname + target.search + target.hash;
+        }
+        function swapContent(rawUrl) {
+            var url = keepTableState(rawUrl);
             return fetch(url, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
                 credentials: 'same-origin',

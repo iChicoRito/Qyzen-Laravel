@@ -61,11 +61,15 @@
                 <td>
                     <span class="kt-badge kt-badge-outline">{{ $q->quiz_type === 'multiple_choice' ? 'Multiple Choice' : 'Identification' }}</span>
                 </td>
+                {{-- Task 32: a question may be shared across subjects. --}}
                 <td>
-                    {{ optional($q->subject)->subject_name }}
-                    @if (optional($q->subject)->section)
-                        <span class="text-xs text-secondary-foreground">({{ $q->subject->section->section_name }})</span>
-                    @endif
+                    <div class="flex flex-wrap gap-1">
+                        @forelse ($q->subjects as $s)
+                            <span class="kt-badge kt-badge-sm kt-badge-outline">{{ $s->subject_name }}@if($s->section)<span class="text-xs text-secondary-foreground ms-1">({{ $s->section->section_name }})</span>@endif</span>
+                        @empty
+                            <span class="text-secondary-foreground">-</span>
+                        @endforelse
+                    </div>
                 </td>
                 <td class="text-secondary-foreground text-sm">
                     @if ($q->quiz_type === 'multiple_choice')
@@ -156,15 +160,28 @@
                 </a>
             </div>
 
-            {{-- Target Subject --}}
-            <div class="flex flex-col gap-1">
-                <label class="kt-form-label">Target Subject</label>
-                <select name="subject_id" class="kt-select w-full" required
-                        data-kt-select="true" data-kt-select-enable-search="true"
-                        data-kt-select-placeholder="Select a subject"
-                        data-kt-select-search-placeholder="Search subjects…">
-                    @foreach ($filterSubjects as $s)<option value="{{ $s->id }}">{{ $s->subject_code }} — {{ $s->subject_name }} ({{ optional($s->section)->section_name ?? 'No section' }})</option>@endforeach
-                </select>
+            {{-- Task 32: target subjects. One file uploaded for several subjects stays ONE set of
+                 questions, shared through tbl_quiz_subject — no duplicate rows per destination.
+                 A subject belongs to exactly one section, so picking across sections covers the
+                 multi-section case without a second control. --}}
+            <div class="flex flex-col gap-1.5">
+                <label class="kt-form-label">Target Subjects</label>
+                <details class="rounded-lg border border-border" open>
+                    <summary class="flex items-center justify-between gap-2 px-4 py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                        <span class="text-sm text-mono" data-subject-summary data-subject-summary-default="Select one or more subjects">Select one or more subjects</span>
+                        <i class="ki-filled ki-down text-sm text-muted-foreground"></i>
+                    </summary>
+                    <div class="grid grid-cols-1 gap-2.5 p-3 pt-0 max-h-60 overflow-y-auto kt-scrollable-y">
+                        @foreach ($uploadSubjects as $s)
+                            <x-checkbox-card
+                                name="subject_ids[]"
+                                :value="$s->id"
+                                :title="$s->subject_name"
+                                :desc="$s->subject_code . ' | ' . (optional($s->section)->section_name ?? 'No section')"
+                                data-subject-option />
+                        @endforeach
+                    </div>
+                </details>
             </div>
 
             {{-- Files --}}

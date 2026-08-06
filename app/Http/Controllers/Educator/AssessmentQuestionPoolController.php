@@ -31,7 +31,7 @@ class AssessmentQuestionPoolController extends Controller
         // matching set, not just the ~10 rendered on this page.
         $allFilteredIds = (clone $filtered)->orderBy('id')->pluck('id')->all();
         $bankQuestions = $filtered
-            ->with(['subject:id,subject_code,subject_name,sections_id', 'subject.section:id,section_name', 'eligibleAssessments:id,assessment_code'])
+            ->with(['subjects:id,subject_code,subject_name,sections_id', 'subjects.section:id,section_name', 'eligibleAssessments:id,assessment_code'])
             ->orderBy('id')->get();
         // Unfiltered total drives the "show the filter controls" gate + the summary denominator,
         // so filtering down to <=8 questions never hides the batch dropdown (which would trap the user).

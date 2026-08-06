@@ -65,49 +65,54 @@
                 </tr>
             </thead>
         </x-slot:head>
-        @forelse ($groups as $rows)
-            @foreach ($rows as $m)
-                <tr>
-                    <td><input type="checkbox" class="kt-checkbox kt-checkbox-sm" name="ids[]" value="{{ $m->id }}" form="materials_bulk_form" data-material-select aria-label="Select material"></td>
-                    <td class="text-mono font-medium text-sm">
-                        <div class="flex items-center gap-2.5">
-                            <img class="size-5 shrink-0" alt="{{ strtoupper($m->file_extension) }} file"
-                                 src="{{ asset('metronic-tailwind-html-demos/dist/assets/media/file-types/'.$fileIcon($m->file_extension)) }}">
-                            <span>{{ $m->file_name }}</span>
+        @forelse ($materials as $m)
+            <tr>
+                <td><input type="checkbox" class="kt-checkbox kt-checkbox-sm" name="ids[]" value="{{ $m->id }}" form="materials_bulk_form" data-material-select aria-label="Select material"></td>
+                <td class="text-mono font-medium text-sm">
+                    <div class="flex items-center gap-2.5">
+                        <img class="size-5 shrink-0" alt="{{ strtoupper($m->file_extension) }} file"
+                             src="{{ asset('metronic-tailwind-html-demos/dist/assets/media/file-types/'.$fileIcon($m->file_extension)) }}">
+                        <span>{{ $m->file_name }}</span>
+                    </div>
+                </td>
+                {{-- Task 32: one file is shared across every subject it was assigned to. --}}
+                <td>
+                    <div class="flex flex-wrap gap-1">
+                        @foreach ($m->subjects as $sub)
+                            <span data-filter-value="subject" data-filter-key="{{ $sub->id }}" hidden></span>
+                            <span class="kt-badge kt-badge-sm kt-badge-outline">{{ $sub->subject_name }}</span>
+                        @endforeach
+                    </div>
+                </td>
+                <td>
+                    @foreach ($m->subjects->pluck('sections_id')->unique() as $sectionId)
+                        <span data-filter-value="section" data-filter-key="{{ $sectionId }}" hidden></span>
+                    @endforeach
+                    {{ $m->subjects->pluck('section.section_name')->filter()->unique()->implode(', ') ?: '—' }}
+                </td>
+                <td>{{ strtoupper($m->file_extension) }}</td>
+                <td class="text-secondary-foreground">{{ $m->file_size ? number_format($m->file_size / 1024, 1).' KB' : '—' }}</td>
+                <td>
+                    <span data-filter-value="status" data-filter-key="{{ $m->is_active ? 'active' : 'inactive' }}" hidden></span>
+                    <span class="kt-badge rounded-full kt-badge-outline kt-badge-{{ $m->is_active ? 'success' : 'destructive' }} gap-1 items-center">
+                        <span class="kt-badge-dot size-1.5"></span>{{ $m->is_active ? 'Active' : 'Inactive' }}
+                    </span>
+                </td>
+                <td class="text-center">
+                    <x-table-actions
+                        :edit-modal="route('educator.materials.edit', $m)"
+                        edit-modal-title="Edit material"
+                        :delete="route('educator.materials.destroy', $m)"
+                        confirm="Delete this file? This cannot be undone.">
+                        <div class="kt-menu-item">
+                            <a class="kt-menu-link" href="{{ route('educator.materials.download', $m) }}">
+                                <span class="kt-menu-icon"><i class="ki-filled ki-exit-down"></i></span>
+                                <span class="kt-menu-title">Download</span>
+                            </a>
                         </div>
-                    </td>
-                    <td>
-                        <span data-filter-value="subject" data-filter-key="{{ $m->subject_id }}" hidden></span>
-                        {{ optional($m->subject)->subject_name }}
-                    </td>
-                    <td>
-                        <span data-filter-value="section" data-filter-key="{{ $m->section_id }}" hidden></span>
-                        {{ optional($m->section)->section_name ?? '—' }}
-                    </td>
-                    <td>{{ strtoupper($m->file_extension) }}</td>
-                    <td class="text-secondary-foreground">{{ $m->file_size ? number_format($m->file_size / 1024, 1).' KB' : '—' }}</td>
-                    <td>
-                        <span data-filter-value="status" data-filter-key="{{ $m->is_active ? 'active' : 'inactive' }}" hidden></span>
-                        <span class="kt-badge rounded-full kt-badge-outline kt-badge-{{ $m->is_active ? 'success' : 'destructive' }} gap-1 items-center">
-                            <span class="kt-badge-dot size-1.5"></span>{{ $m->is_active ? 'Active' : 'Inactive' }}
-                        </span>
-                    </td>
-                    <td class="text-center">
-                        <x-table-actions
-                            :edit-modal="route('educator.materials.edit', $m)"
-                            edit-modal-title="Edit material"
-                            :delete="route('educator.materials.destroy', $m)"
-                            confirm="Delete this file? This cannot be undone.">
-                            <div class="kt-menu-item">
-                                <a class="kt-menu-link" href="{{ route('educator.materials.download', $m) }}">
-                                    <span class="kt-menu-icon"><i class="ki-filled ki-exit-down"></i></span>
-                                    <span class="kt-menu-title">Download</span>
-                                </a>
-                            </div>
-                        </x-table-actions>
-                    </td>
-                </tr>
-            @endforeach
+                    </x-table-actions>
+                </td>
+            </tr>
         @empty
             <tr><td colspan="8" class="text-center text-secondary-foreground py-5">No materials.</td></tr>
         @endforelse

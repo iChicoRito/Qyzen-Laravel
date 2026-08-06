@@ -39,38 +39,42 @@
                 </tr>
             </thead>
         </x-slot:head>
-        @forelse ($groups as $rows)
-            @foreach ($rows as $m)
-                <tr>
-                    <td class="text-mono font-medium text-sm">
-                        <div class="flex items-center gap-2.5">
-                            <img class="size-5 shrink-0" alt="{{ strtoupper($m->file_extension) }} file"
-                                 src="{{ asset('metronic-tailwind-html-demos/dist/assets/media/file-types/'.$fileIcon($m->file_extension)) }}">
-                            <span>{{ $m->file_name }}</span>
+        @forelse ($materials as $m)
+            {{-- Task 32: one file, many subjects. Show only the ones this student is enrolled in. --}}
+            @php $mySubjects = $m->subjects->whereIn('id', $enrolledSubjectIds); @endphp
+            <tr>
+                <td class="text-mono font-medium text-sm">
+                    <div class="flex items-center gap-2.5">
+                        <img class="size-5 shrink-0" alt="{{ strtoupper($m->file_extension) }} file"
+                             src="{{ asset('metronic-tailwind-html-demos/dist/assets/media/file-types/'.$fileIcon($m->file_extension)) }}">
+                        <span>{{ $m->file_name }}</span>
+                    </div>
+                </td>
+                <td>
+                    @foreach ($mySubjects as $sub)
+                        <span data-filter-value="subject" data-filter-key="{{ $sub->id }}" hidden></span>
+                    @endforeach
+                    {{ $mySubjects->pluck('subject_name')->implode(', ') ?: '—' }}
+                </td>
+                <td>
+                    @foreach ($mySubjects->pluck('sections_id')->unique() as $sectionId)
+                        <span data-filter-value="section" data-filter-key="{{ $sectionId }}" hidden></span>
+                    @endforeach
+                    {{ $mySubjects->pluck('section.section_name')->filter()->unique()->implode(', ') ?: '—' }}
+                </td>
+                <td>{{ strtoupper($m->file_extension) }}</td>
+                <td class="text-secondary-foreground">{{ $m->updated_at?->format('Y-m-d') }}</td>
+                <td class="text-center">
+                    <x-table-actions>
+                        <div class="kt-menu-item">
+                            <a class="kt-menu-link" href="{{ route('student.materials.download', $m) }}">
+                                <span class="kt-menu-icon"><i class="ki-filled ki-exit-down"></i></span>
+                                <span class="kt-menu-title">Download</span>
+                            </a>
                         </div>
-                    </td>
-                    <td>
-                        <span data-filter-value="subject" data-filter-key="{{ $m->subject_id }}" hidden></span>
-                        {{ optional($m->subject)->subject_name }}
-                    </td>
-                    <td>
-                        <span data-filter-value="section" data-filter-key="{{ $m->section_id }}" hidden></span>
-                        {{ optional($m->section)->section_name ?? '—' }}
-                    </td>
-                    <td>{{ strtoupper($m->file_extension) }}</td>
-                    <td class="text-secondary-foreground">{{ $m->updated_at?->format('Y-m-d') }}</td>
-                    <td class="text-center">
-                        <x-table-actions>
-                            <div class="kt-menu-item">
-                                <a class="kt-menu-link" href="{{ route('student.materials.download', $m) }}">
-                                    <span class="kt-menu-icon"><i class="ki-filled ki-exit-down"></i></span>
-                                    <span class="kt-menu-title">Download</span>
-                                </a>
-                            </div>
-                        </x-table-actions>
-                    </td>
-                </tr>
-            @endforeach
+                    </x-table-actions>
+                </td>
+            </tr>
         @empty
             <tr><td colspan="6" class="text-center text-secondary-foreground py-5">No materials available.</td></tr>
         @endforelse
